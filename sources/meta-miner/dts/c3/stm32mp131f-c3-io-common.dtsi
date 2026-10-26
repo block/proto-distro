@@ -1,0 +1,62 @@
+
+#define MINER_IO_LED_OLD                                                                 \
+    miner-io-led@0 {                                                                     \
+        compatible = "worldsemi,ws2811f";                                                \
+        spi-max-frequency = <2500000>;                                                   \
+        #address-cells = <2>;                                                            \
+        #size-cells = <0>;                                                               \
+        default-colors = <LED_COLOR_ID_RED>;                                             \
+        reg = <0 0>;                                                                     \
+        io-board-type = <0x0>;                                                           \
+                                                                                         \
+        7seg {                                                                           \
+            label = "led_7seg";                                                          \
+                                                                                         \
+            led@2,1 { reg = <2 1>; label = "7seg_a"; };                                  \
+            led@2,0 { reg = <2 0>; label = "7seg_b"; };                                  \
+            led@1,2 { reg = <1 2>; label = "7seg_c"; };                                  \
+            led@1,1 { reg = <1 1>; label = "7seg_d"; };                                  \
+            led@1,0 { reg = <1 0>; label = "7seg_e"; };                                  \
+            led@0,2 { reg = <0 2>; label = "7seg_f"; };                                  \
+            led@0,1 { reg = <0 1>; label = "7seg_g"; };                                  \
+            led@0,0 { reg = <0 0>; label = "7seg_p"; };                                  \
+        };                                                                               \
+                                                                                         \
+        led@2,2 { reg = <2 2>; label = "led_psu"; };                                     \
+        led@3,0 { reg = <3 0>; label = "led_hb"; };                                      \
+        led@3,1 { reg = <3 1>; label = "led_cb"; };                                      \
+        led@3,2 { reg = <3 2>; label = "led_fan"; };                                     \
+        led@4,0 { reg = <4 0>; colors = <LED_COLOR_ID_RED LED_COLOR_ID_GREEN>;           \
+                   label = "led_status"; };                                              \
+    };                                                                                   
+
+#define MINER_IO_LED_RGB                                                                 \
+    miner-io-led@1 {                                                                     \
+        compatible = "worldsemi,ws2811f";                                                \
+        spi-max-frequency = <2500000>;                                                   \
+        #address-cells = <2>;                                                            \
+        #size-cells = <0>;                                                               \
+        default-colors = <LED_COLOR_ID_GREEN LED_COLOR_ID_RED LED_COLOR_ID_BLUE>;        \
+        reg = <0 0>;                                                                     \
+        io-board-type = <0x1>;                                                           \
+                                                                                         \
+        7seg {                                                                           \
+            label = "led_7seg";                                                          \
+                                                                                         \
+            led@2,1 { reg = <2 1>; label = "7seg_a"; };                                  \
+            led@2,0 { reg = <2 0>; label = "7seg_b"; };                                  \
+            led@1,2 { reg = <1 2>; label = "7seg_c"; };                                  \
+            led@1,1 { reg = <1 1>; label = "7seg_d"; };                                  \
+            led@1,0 { reg = <1 0>; label = "7seg_e"; };                                  \
+            led@0,2 { reg = <0 2>; label = "7seg_f"; };                                  \
+            led@0,1 { reg = <0 1>; label = "7seg_g"; };                                  \
+            led@0,0 { reg = <0 0>; label = "7seg_p"; };                                  \
+        };                                                                               \
+                                                                                         \
+        led@3 { reg = <3 0>; label = "led_status"; };                                    \
+        led@4 { reg = <4 0>; label = "led_cb"; };                                        \
+        led@5 { reg = <5 0>; label = "led_fan"; };                                       \
+        led@6 { reg = <6 0>; label = "led_hb"; };                                        \
+        led@7 { reg = <7 0>; label = "led_psu"; };                                       \
+    };                                                                                   
+

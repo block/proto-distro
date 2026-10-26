@@ -1,0 +1,22 @@
+{
+    "base_url": "https://device.memfault.com",
+    "project_key": "MEMFAULT_PROJECT_KEY",
+    "software_type": "MEMFAULT_SOFTWARE_TYPE",
+    "software_version": "MEMFAULT_SOFTWARE_VERSION",
+    "enable_data_collection": true,
+    "enable_dev_mode": true,
+    "persist_dir": "/etc/memfault",
+    "swupdate": {
+        "output_file": "/etc/memfault-generated/swupdate.cfg"
+    },
+    "reboot": {
+        "last_reboot_reason_file": "/etc/memfault/last_reboot_reason"
+    },
+    "metrics": {
+        "enable_daily_heartbeats": false,
+        "statsd_server": null,
+        "system_metric_collection": {
+            "enable": false
+        }
+    }
+}

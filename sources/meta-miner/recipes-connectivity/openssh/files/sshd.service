@@ -1,0 +1,17 @@
+[Unit]
+Description=OpenSSH server daemon
+Wants=sshdgenkeys.service
+After=sshdgenkeys.service
+
+[Service]
+Type=simple
+Environment="SSHD_OPTS="
+EnvironmentFile=-/etc/default/ssh
+ExecStartPre=/bin/mkdir -p /var/run/sshd
+ExecStart=-/usr/sbin/sshd -D $SSHD_OPTS
+KillMode=process
+Restart=on-failure
+RestartSec=42s
+
+[Install]
+WantedBy=multi-user.target

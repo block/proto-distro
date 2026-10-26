@@ -1,0 +1,14 @@
+[Unit]
+After=local-fs.target
+Before=miner-boot.service
+Before=avahi-daemon.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh "/usr/bin/initscript.sh"
+ExecStartPost=-/bin/sh -c '@BASE_BINDIR@/systemctl is-active --quiet application-first-boot.target || @BASE_BINDIR@/systemctl start application-first-boot.target'
+ExecStartPost=/bin/sh -c 'if @BASE_BINDIR@/systemctl is-active --quiet application-first-boot.target; then @BASE_BINDIR@/systemctl disable miner-firstboot.service; fi'
+RemainAfterExit=true
+
+[Install]
+WantedBy=multi-user.target

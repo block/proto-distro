@@ -1,0 +1,12 @@
+{
+    "files.exclude": {
+        "**/artifacts": true,
+        "**/sstate-cache": true,
+        "**/build": true,
+        "**/sources/cache": true,
+        "**/sources/conf": true,
+        "**/sources/tmp-*": true,
+        "**/*.log": true,
+    },
+}
+

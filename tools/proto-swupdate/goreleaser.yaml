@@ -1,0 +1,62 @@
+version: 2
+project_name: proto-swupdate
+before:
+  hooks:
+    - mkdir -p dist/licenses
+    - cp ../../LICENSE dist/licenses/LICENSE
+builds:
+  - id: proto-swupdate
+    main: ./cmd/proto-swupdate
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X main.Version={{ if .Env.DISTRO_VERSION }}{{ .Env.DISTRO_VERSION }}{{ else }}{{ .Version }}{{ end }}
+      - -X main.GitCommit={{.ShortCommit}}
+    goos:
+      - linux
+    goarch:
+      - arm
+    goarm:
+      - 7
+nfpms:
+  - id: proto-swupdate
+    package_name: proto-swupdate
+    file_name_template: >-
+      {{ .PackageName }}_{{ .Arch }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}_
+      {{- if .Env.DISTRO_VERSION }}{{ .Env.DISTRO_VERSION }}
+      {{- else }}{{ .Version }}{{ end }}
+    vendor: Block Inc.
+    maintainer: Proto SW Team <btcm-sw-team@squareup.com>
+    description: SWUpdate orchestration and FWU metadata tool
+    # First-party app license; dependencies retain THIRD_PARTY_NOTICES terms.
+    license: Apache-2.0
+    formats:
+      - ipk
+    bindir: /usr/bin
+    replaces:
+      - fwu-metadata-tool
+    contents:
+      - src: dist/licenses/LICENSE
+        dst: /usr/share/licenses/proto-swupdate/LICENSE
+      - src: THIRD_PARTY_NOTICES
+        dst: /usr/share/licenses/proto-swupdate/THIRD_PARTY_NOTICES
+archives:
+  - id: raw
+    formats:
+      - binary
+    name_template: "{{ .ProjectName }}"
+  - id: licensed
+    formats:
+      - tar.gz
+    files:
+      - src: dist/licenses/LICENSE
+        strip_parent: true
+      - src: THIRD_PARTY_NOTICES
+        strip_parent: true
+dist: ../../dist/proto-swupdate/release
+changelog:
+  disable: true
+release:
+  disable: true

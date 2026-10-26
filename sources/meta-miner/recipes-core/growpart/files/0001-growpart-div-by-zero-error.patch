@@ -1,0 +1,16 @@
+diff --git a/bin/growpart b/bin/growpart
+index 994b258..bc77671 100755
+--- a/bin/growpart
++++ b/bin/growpart
+@@ -321,6 +321,11 @@ resize_sfdisk() {
+ 		read _x _x _x _x disk_size _x sector_num _x < "$tmp"
+ 		sector_size=$((disk_size/$sector_num))
+ 		restore_func=sfdisk_restore
++
++		# Workaround for when sector_size is 0 somehow from above division
++		if [ "$sector_size" -eq "0" ]; then
++			sector_size=512
++		fi
+ 	fi
+ 
+ 	debug 1 "$sector_num sectors of $sector_size. total size=${disk_size} bytes"

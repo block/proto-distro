@@ -1,0 +1,9 @@
+go 1.25.0
+
+use (
+	./tools/cb_st_flasher
+	./tools/distro
+	./tools/flashimage
+	./tools/go_fastboot
+	./tools/proto-swupdate
+)

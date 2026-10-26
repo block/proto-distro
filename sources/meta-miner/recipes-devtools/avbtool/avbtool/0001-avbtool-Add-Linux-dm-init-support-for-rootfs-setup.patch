@@ -1,0 +1,254 @@
+From aca43c00a7d8b80faf9eefa691fd3e3aa03b5e65 Mon Sep 17 00:00:00 2001
+From: Bart Kosciarz <bkosciarz@squareup.com>
+Date: Thu, 9 Oct 2025 15:55:14 -0700
+Subject: [PATCH] avbtool: Add Linux dm-init support for rootfs setup
+
+Add --setup_as_rootfs_for_dm_init flag to generate Linux-native
+dm-mod.create= kernel parameters for CONFIG_DM_INIT. This enables
+booting non-Android Linux systems with dm-verity without requiring
+an initramfs.
+
+The new flag generates dm-init compatible command lines with:
+- dm-mod.create= format (not Android's dm= format)
+- Configurable device path via --dm_init_device
+- Support for FEC and check_at_most_once flags
+- Fallback descriptor for hashtree-disabled mode
+
+Example usage:
+  avbtool add_hashtree_footer \
+    --image rootfs.img \
+    --partition_name rootfs \
+    --partition_size 1048576 \
+    --setup_as_rootfs_for_dm_init \
+    --dm_init_device /dev/sda1 \
+    --hash_algorithm sha256 \
+    --key key.pem
+
+This generates kernel cmdline:
+  dm-mod.create=vroot,,ro,0 <sectors> verity 1 /dev/sda1 /dev/sda1 ...
+
+Changes:
+- New _get_cmdline_descriptors_for_dm_init() method
+- Updated _generate_vbmeta_blob() to handle dm-init descriptors
+- Added --setup_as_rootfs_for_dm_init and --dm_init_device flags
+- Updated add_hashtree_footer() method signature and implementation
+---
+ avbtool.py | 115 +++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 115 insertions(+)
+
+diff --git a/avbtool.py b/avbtool.py
+index 595936c..90181d9 100755
+--- a/avbtool.py
++++ b/avbtool.py
+@@ -2929,6 +2929,87 @@ class Avb(object):
+ 
+     return self._get_cmdline_descriptors_for_hashtree_descriptor(ht)
+ 
++  def _get_cmdline_descriptors_for_dm_init(self, ht, dm_device_path=None):
++    """Generate kernel cmdline descriptors for Linux dm-init.
++
++    This generates dm-mod.create= format for CONFIG_DM_INIT, intended for
++    non-Android Linux systems without initramfs.
++
++    Arguments:
++      ht: A AvbHashtreeDescriptor
++      dm_device_path: Device path to use (e.g., '/dev/sda1'). If None,
++        uses '/dev/XXX' as placeholder.
++
++    Returns:
++      A list with two AvbKernelCmdlineDescriptor with dm-init kernel cmdline
++      instructions. There is one for when hashtree is not disabled and one for
++      when it is.
++
++    """
++    if dm_device_path is None:
++      dm_device_path = '/dev/XXX'
++
++    # Build dm-mod.create= string
++    # Format: dm-mod.create="<name>,<uuid>,<minor>,<flags>,<table>"
++    # Note: Quotes are required so kernel treats entire value as single parameter
++    c = 'dm-mod.create="'
++    c += 'vroot'                                                # name
++    c += ','                                                    # uuid separator
++    c += ','                                                    # uuid (empty)
++    c += '0'                                                    # minor device number
++    c += ','
++    c += 'ro'                                                   # flags
++    c += ','                                                    # table separator
++    c += '0'                                                    # start sector
++    c += ' {}'.format(ht.image_size // 512)                    # num sectors
++    c += ' verity'                                              # target type
++    c += ' {}'.format(ht.dm_verity_version)                    # version
++    c += ' {}'.format(dm_device_path)                          # data device
++    c += ' {}'.format(dm_device_path)                          # hash device
++    c += ' {}'.format(ht.data_block_size)                      # data block size
++    c += ' {}'.format(ht.hash_block_size)                      # hash block size
++    c += ' {}'.format(ht.image_size // ht.data_block_size)    # num data blocks
++    c += ' {}'.format(ht.image_size // ht.data_block_size)    # hash start block
++    c += ' {}'.format(ht.hash_algorithm)                       # hash algorithm
++    c += ' {}'.format(ht.root_digest.hex())                    # root digest
++    c += ' {}'.format(ht.salt.hex())                           # salt
++
++    # Add optional parameters
++    if ht.fec_num_roots > 0:
++      if ht.flags & AvbHashtreeDescriptor.FLAGS_CHECK_AT_MOST_ONCE:
++        c += ' 6'  # number of optional args
++        c += ' check_at_most_once'
++      else:
++        c += ' 5'  # number of optional args
++      c += ' ignore_zero_blocks'
++      c += ' use_fec_from_device {}'.format(dm_device_path)
++      c += ' fec_roots {}'.format(ht.fec_num_roots)
++      c += ' fec_blocks {}'.format(ht.fec_offset // ht.data_block_size)
++      c += ' fec_start {}'.format(ht.fec_offset // ht.data_block_size)
++    else:
++      if ht.flags & AvbHashtreeDescriptor.FLAGS_CHECK_AT_MOST_ONCE:
++        c += ' 2'  # number of optional args
++        c += ' check_at_most_once'
++      else:
++        c += ' 1'  # number of optional args
++      c += ' ignore_zero_blocks'
++
++    c += '"'  # Close the quoted value
++
++    # Generate the descriptor for when hashtree is enabled
++    desc = AvbKernelCmdlineDescriptor()
++    desc.kernel_cmdline = c + ' root=/dev/dm-0'
++    desc.flags = (
++        AvbKernelCmdlineDescriptor.FLAGS_USE_ONLY_IF_HASHTREE_NOT_DISABLED)
++
++    # The descriptor for when hashtree verification is disabled is simpler
++    desc_no_ht = AvbKernelCmdlineDescriptor()
++    desc_no_ht.kernel_cmdline = 'root={}'.format(dm_device_path)
++    desc_no_ht.flags = (
++        AvbKernelCmdlineDescriptor.FLAGS_USE_ONLY_IF_HASHTREE_DISABLED)
++
++    return [desc, desc_no_ht]
++
+   def make_vbmeta_image(self, output, chain_partitions_use_ab,
+                         chain_partitions_do_not_use_ab, algorithm_name,
+                         key_path, public_key_metadata_path, rollback_index,
+@@ -2993,11 +3074,13 @@ class Avb(object):
+ 
+     descriptors = []
+     ht_desc_to_setup = None
++    ht_desc_to_setup_dm_init = None
+     vbmeta_blob = self._generate_vbmeta_blob(
+         algorithm_name, key_path, public_key_metadata_path, descriptors,
+         chain_partitions_use_ab, chain_partitions_do_not_use_ab,
+         rollback_index, flags, rollback_index_location, props, props_from_file,
+         kernel_cmdlines, setup_rootfs_from_kernel, ht_desc_to_setup,
++        ht_desc_to_setup_dm_init, None,
+         include_descriptors_from_image, signing_helper,
+         signing_helper_with_files, release_string,
+         append_to_release_string, tmp_header.required_libavb_version_minor)
+@@ -3019,6 +3102,8 @@ class Avb(object):
+                             kernel_cmdlines,
+                             setup_rootfs_from_kernel,
+                             ht_desc_to_setup,
++                            ht_desc_to_setup_dm_init,
++                            dm_init_device_path,
+                             include_descriptors_from_image, signing_helper,
+                             signing_helper_with_files,
+                             release_string, append_to_release_string,
+@@ -3050,6 +3135,9 @@ class Avb(object):
+         dm-verity kernel cmdline from.
+       ht_desc_to_setup: If not None, an AvbHashtreeDescriptor to
+         generate dm-verity kernel cmdline descriptors from.
++      ht_desc_to_setup_dm_init: If not None, an AvbHashtreeDescriptor to
++        generate Linux dm-init kernel cmdline descriptors from.
++      dm_init_device_path: Device path for dm-init (e.g., '/dev/sda1').
+       include_descriptors_from_image: List of file objects for which
+         to insert descriptors from.
+       signing_helper: Program which signs a hash and return signature.
+@@ -3155,6 +3243,13 @@ class Avb(object):
+       encoded_descriptors.extend(cmdline_desc[0].encode())
+       encoded_descriptors.extend(cmdline_desc[1].encode())
+ 
++    # Add AvbKernelCmdline descriptor for Linux dm-init from desc, if requested.
++    if ht_desc_to_setup_dm_init:
++      cmdline_desc = self._get_cmdline_descriptors_for_dm_init(
++          ht_desc_to_setup_dm_init, dm_init_device_path)
++      encoded_descriptors.extend(cmdline_desc[0].encode())
++      encoded_descriptors.extend(cmdline_desc[1].encode())
++
+     # Add kernel command-lines.
+     if kernel_cmdlines:
+       for i in kernel_cmdlines:
+@@ -3546,11 +3641,13 @@ class Avb(object):
+ 
+       # Generate the VBMeta footer.
+       ht_desc_to_setup = None
++      ht_desc_to_setup_dm_init = None
+       vbmeta_blob = self._generate_vbmeta_blob(
+           algorithm_name, key_path, public_key_metadata_path, [h_desc],
+           chain_partitions_use_ab, chain_partitions_do_not_use_ab, rollback_index,
+           flags, rollback_index_location, props, props_from_file,
+           kernel_cmdlines, setup_rootfs_from_kernel, ht_desc_to_setup,
++          ht_desc_to_setup_dm_init, None,
+           include_descriptors_from_image, signing_helper,
+           signing_helper_with_files, release_string,
+           append_to_release_string, required_libavb_version_minor)
+@@ -3613,6 +3710,8 @@ class Avb(object):
+                           props, props_from_file, kernel_cmdlines,
+                           setup_rootfs_from_kernel,
+                           setup_as_rootfs_from_kernel,
++                          setup_as_rootfs_for_dm_init,
++                          dm_init_device_path,
+                           include_descriptors_from_image,
+                           calc_max_image_size, signing_helper,
+                           signing_helper_with_files,
+@@ -3650,6 +3749,9 @@ class Avb(object):
+         dm-verity kernel cmdline from.
+       setup_as_rootfs_from_kernel: If True, generate dm-verity kernel
+         cmdline to set up rootfs.
++      setup_as_rootfs_for_dm_init: If True, generate Linux dm-init kernel
++        cmdline (dm-mod.create=) to set up rootfs.
++      dm_init_device_path: Device path for dm-init (e.g., '/dev/sda1').
+       include_descriptors_from_image: List of file objects for which
+         to insert descriptors from.
+       calc_max_image_size: Don't store the hashtree or footer - instead
+@@ -3846,6 +3948,10 @@ class Avb(object):
+       if setup_as_rootfs_from_kernel:
+         ht_desc_to_setup = ht_desc
+ 
++      ht_desc_to_setup_dm_init = None
++      if setup_as_rootfs_for_dm_init:
++        ht_desc_to_setup_dm_init = ht_desc
++
+       # Generate the VBMeta footer and add padding as needed.
+       vbmeta_offset = tree_offset + len_hashtree_and_fec
+       vbmeta_blob = self._generate_vbmeta_blob(
+@@ -3854,6 +3960,7 @@ class Avb(object):
+           rollback_index, flags, rollback_index_location,
+           props, props_from_file,
+           kernel_cmdlines, setup_rootfs_from_kernel, ht_desc_to_setup,
++          ht_desc_to_setup_dm_init, dm_init_device_path,
+           include_descriptors_from_image, signing_helper,
+           signing_helper_with_files, release_string,
+           append_to_release_string, required_libavb_version_minor)
+@@ -4531,6 +4638,12 @@ class AvbTool(object):
+     sub_parser.add_argument('--setup_as_rootfs_from_kernel',
+                             action='store_true',
+                             help='Adds kernel cmdline for setting up rootfs')
++    sub_parser.add_argument('--setup_as_rootfs_for_dm_init',
++                            action='store_true',
++                            help='Adds Linux dm-init cmdline for setting up rootfs')
++    sub_parser.add_argument('--dm_init_device',
++                            metavar='DEVICE_PATH',
++                            help='Device path for dm-init (e.g., /dev/sda1)')
+     sub_parser.add_argument('--no_hashtree',
+                             action='store_true',
+                             help='Do not append hashtree')
+@@ -4943,6 +5056,8 @@ Please use '--hash_algorithm sha256'.
+         args.kernel_cmdline,
+         args.setup_rootfs_from_kernel,
+         args.setup_as_rootfs_from_kernel,
++        args.setup_as_rootfs_for_dm_init,
++        args.dm_init_device,
+         args.include_descriptors_from_image,
+         args.calc_max_image_size,
+         args.signing_helper,
+-- 
+2.51.0
+

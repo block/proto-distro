@@ -1,0 +1,25 @@
+[Unit]
+Description=Save active logs to persistent storage before shutdown
+DefaultDependencies=no
+# Ensure service is stopped when shutdown starts (triggers ExecStop)
+Conflicts=shutdown.target
+# Run before shutdown/reboot/halt
+Before=shutdown.target reboot.target halt.target
+# Shutdown reverses startup ordering: stop rsyslog before saving its files.
+Before=rsyslog.service
+# /var/log is a symlink into /var/volatile; require the backing mount explicitly.
+# Keep source and destination mounted until the log save finishes.
+RequiresMountsFor=/var/log /var/volatile /data
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+# No-op command to satisfy systemd (service must start to run ExecStop on shutdown)
+ExecStart=/bin/true
+# ExecStop runs during shutdown
+ExecStop=/usr/bin/save-active-logs.sh
+# Give it some time to complete
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

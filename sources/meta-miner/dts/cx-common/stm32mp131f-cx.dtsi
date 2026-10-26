@@ -1,0 +1,369 @@
+/* SPDX-License-Identifier: (GPL-2.0+ OR BSD-3-Clause) */
+/*
+* Copyright (C) STMicroelectronics 2024 - All Rights Reserved
+* Author: STM32CubeMX code generation for STMicroelectronics.
+*/
+
+#include <dt-bindings/pinctrl/stm32-pinfunc.h>
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/rtc/rtc-stm32.h>
+#include "stm32mp135.dtsi"
+#include "stm32mp13xf.dtsi"
+#include "stm32mp13-pinctrl.dtsi"
+
+/ {
+    manufacturer-name = "Block";
+    product-name = "Proto";
+    board-rev = "Cx-xyz"; /* This should be overridden in the board specific DTS */
+    soc-name = "STM32MP131F";
+    descriptive-name = "Miner Controller Board";
+
+    chosen {
+        #address-cells = <1>;
+        #size-cells = <1>;
+        ranges;
+        stdout-path = "serial0:115200n8";
+    };
+
+    memory@c0000000 {
+        device_type = "memory";
+        reg = <0xc0000000 0x20000000>;
+    };
+
+    reserved-memory {
+        #address-cells = <1>;
+        #size-cells = <1>;
+        ranges;
+
+        bootcount@dcfffff0 {
+            reg = <0xdcfffff0 0x0000010>;
+            no-map;
+        };
+
+        optee_framebuffer@dd000000 {
+            reg = <0xdd000000 0x1000000>;
+            no-map;
+        };
+
+        optee@de000000 {
+            reg = <0xde000000 0x2000000>;
+            no-map;
+        };
+    };
+
+    board-id {
+        compatible = "miner-board-id";
+        id-gpios = <&gpioi 0 GPIO_ACTIVE_HIGH>, /* PI0 */
+                   <&gpioi 1 GPIO_ACTIVE_HIGH>, /* PI1 */
+                   <&gpioi 2 GPIO_ACTIVE_HIGH>, /* PI2 */
+                   <&gpioi 3 GPIO_ACTIVE_HIGH>; /* PI3 */
+    };
+
+    /* Common security jumper */
+    fw-security-jumper {
+        status = "okay";
+        compatible = "gpio-keys";
+
+        fw-security-jumper {
+            label = "fw-security-jumper";
+            gpios = <&gpiof 12 GPIO_ACTIVE_LOW>;
+            linux,code = <BTN_2>;
+        };
+    };
+
+    factory-reset-button {
+        status = "okay";
+        compatible = "gpio-keys";
+        #address-cells = <1>;
+        #size-cells = <0>;
+        autorepeat;
+
+        factory-reset-button {
+            label = "factory-reset-button";
+            linux,code = <KEY_RESTART>;
+            gpios = <&gpiog 11 GPIO_ACTIVE_LOW>;
+            interrupt-parent = <&gpiog>;
+            interrupts = <11 IRQ_TYPE_EDGE_BOTH>;
+        };
+    };
+};
+
+&cpu0 {
+    cpu-supply = <&scmi_vddcore>;
+    clock-frequency = <1000000000>;
+};
+
+&iwdg2 {
+    status = "okay";
+    timeout-sec = <32>;
+};
+
+&bsec {
+    status = "okay";
+
+    mac_addr: mac_addr@e4 {
+        reg = <0xe4 0x8>;
+        st,non-secure-otp;
+    };
+
+    mfg_sn: mfg_sn@ec {
+        reg = <0xec 0x10>;
+        st,non-secure-otp;
+    };
+
+    board_id: board_id@100 {
+        reg = <0x100 0x4>;
+        st,non-secure-otp;
+    };
+};
+
+&dma1 {
+    status = "okay";
+    sram = <&dma_pool>;
+};
+
+&dma2 {
+    status = "okay";
+    sram = <&dma_pool>;
+};
+
+&dts {
+    status = "okay";
+};
+
+/* Common Ethernet configuration */
+&eth1 {
+    pinctrl-names = "default", "sleep";
+    pinctrl-0 = <&eth1_pins_mx>;
+    pinctrl-1 = <&eth1_sleep_pins_mx>;
+    status = "okay";
+
+    phy-mode = "rgmii-id";
+    max-speed = <1000>;
+    phy-handle = <&phy0>;
+    nvmem-cells = <&ethernet_mac1_address>;
+    nvmem-cell-names = "mac-address";
+
+    mdio0 {
+        #address-cells = <1>;
+        #size-cells = <0>;
+        compatible = "snps,dwmac-mdio";
+
+        phy0: ethernet-phy@0 {
+            reg = <0>;
+        };
+    };
+};
+
+&mdma {
+    status = "okay";
+};
+
+&rcc {
+    status = "okay";
+};
+
+&rtc {
+    status = "okay";
+    // For RTC clock source selection, refer to the clock settings in optee-os rcc node
+};
+
+/* Common SCMI regulator definitions */
+&scmi_regu {
+    scmi_vddcpu: voltd-vddcpu {
+        voltd-name = "vddcpu";
+        regulator-name = "vddcpu";
+    };
+    scmi_vdd: voltd-vdd {
+        voltd-name = "vdd";
+        regulator-name = "vdd";
+    };
+    scmi_vddcore: voltd-vddcore {
+        voltd-name = "vddcore";
+        regulator-name = "vddcore";
+    };
+    scmi_vdd_adc: voltd-vdd_adc {
+        voltd-name = "vdd_adc";
+        regulator-name = "vdd_adc";
+    };
+    scmi_vdd_usb: voltd-vdd_usb {
+        voltd-name = "vdd_usb";
+        regulator-name = "vdd_usb";
+    };
+    scmi_vdd_sd: voltd-vdd_sd {
+        voltd-name = "vdd_sd";
+        regulator-name = "vdd_sd";
+    };
+    scmi_v1v8_periph: voltd-v1v8_periph {
+        voltd-name = "v1v8_periph";
+        regulator-name = "v1v8_periph";
+    };
+    scmi_v3v3_sw: voltd-v3v3_sw {
+        voltd-name = "v3v3_sw";
+        regulator-name = "v3v3_sw";
+    };
+    /*
+    * Note: LDO1 from STPMIC1 is configured as always-on in TF-A and not exposed here.
+    * It provides 3.3V to various peripherals including USB hubs. Since these
+    * peripherals don't need runtime power management, the regulator is kept
+    * always on in TF-A and not made available through SCMI.
+    *
+    * If runtime control is needed, LDO1 would need to be configured as not
+    * always-on in TF-A, and then defined here as:
+    * scmi_ldo1: voltd-ldo1 {
+        *     voltd-name = "ldo1_3v3";
+        *     regulator-name = "ldo1_3v3";
+    * };
+    */
+};
+
+/* Common PMIC I2C configuration */
+&i2c2 {
+    status = "okay";
+    clock-frequency = <100000>;
+    pinctrl-names = "default", "sleep";
+    pinctrl-0 = <&i2c2_pins_mx>;
+    pinctrl-1 = <&i2c2_sleep_pins_mx>;
+    /delete-property/ dmas;
+    /delete-property/ dma-names;
+};
+
+/* Common I2C3 configuration for 4 port USB hub */
+&i2c3 {
+    status = "okay";
+    pinctrl-names = "default", "sleep";
+    pinctrl-0 = <&i2c3_pins_mx>;
+    pinctrl-1 = <&i2c3_sleep_pins_mx>;
+
+    /delete-property/ dmas;
+    /delete-property/ dma-names;
+
+    usb2514b@2c {
+        compatible = "microchip,usb2514b";
+        reg = <0x2c>;
+        vendor-id = /bits/ 16 <0x0000>;
+        product-id = /bits/ 16 <0x0000>;
+        string-support;
+        manufacturer = "Block Inc";
+        product = "Cx"; /* The product name should be overridden in the board-specific DTS file */
+    };
+};
+
+/* Common SDMMC2 configuration */
+&sdmmc1 {
+    // No SD card slot on C2/C3 - needed for uboot
+    status = "disabled";
+};
+
+&sdmmc2 {
+    status = "okay";
+    pinctrl-names = "default", "opendrain", "sleep";
+    pinctrl-0 = <&sdmmc2_pins_mx>;
+    pinctrl-1 = <&sdmmc2_opendrain_pins_mx>;
+    pinctrl-2 = <&sdmmc2_sleep_pins_mx>;
+    bus-width = <8>;
+    no-sd;
+    no-sdio;
+    non-removable;
+    st,neg-edge;
+    vmmc-supply = <&scmi_vdd_sd>;
+};
+
+/* Common UART4 configuration */
+&uart4 {
+    status = "okay";
+    pinctrl-names = "default", "sleep";
+    pinctrl-0 = <&uart4_pins_mx>;
+    pinctrl-1 = <&uart4_sleep_pins_mx>;
+    /delete-property/ dmas;
+    /delete-property/ dma-names;
+};
+
+/* Common USB OTG configuration */
+
+&usbh_ehci {
+    status = "okay";
+
+    phys = <&usbphyc_port0>;
+    phy-names = "usb";
+    #address-cells = <1>;
+    #size-cells = <0>;
+
+    hub@1 {
+        compatible = "usb424,2514";
+        reg = <1>;
+        vdd-supply = <&scmi_v3v3_sw>;
+    };
+};
+
+&usbh_ohci {
+    status = "okay";
+};
+
+&usbotg_hs {
+    status = "okay";
+    pinctrl-names = "default", "sleep";
+    pinctrl-0 = <&usb_otg_hs_pins_mx>;
+    pinctrl-1 = <&usb_otg_hs_sleep_pins_mx>;
+
+    phys = <&usbphyc_port1 0>;
+    phy-names = "usb2-phy";
+    usb-role-switch;
+};
+
+&usbphyc {
+    status = "okay";
+};
+
+&usbphyc_port0{
+    status = "okay";
+
+    phy-supply = <&scmi_vdd_usb>;
+    st,tune-hs-dc-level = <2>;
+    st,enable-fs-rftime-tuning;
+    st,enable-hs-rftime-reduction;
+    st,trim-hs-current = <15>;
+    st,trim-hs-impedance = <1>;
+    st,tune-squelch-level = <3>;
+    st,tune-hs-rx-offset = <2>;
+    st,no-lsfs-sc;
+
+    /*
+    * Hack to keep hub active until all connected devices are suspended
+    * otherwise the hub will be powered off as soon as the v3v3 is disabled
+    * and it can disturb connected devices.
+    */
+    connector {
+        compatible = "usb-a-connector";
+        vbus-supply = <&scmi_v3v3_sw>;
+    };
+};
+
+&usbphyc_port1{
+    status = "okay";
+
+    phy-supply = <&scmi_vdd_usb>;
+    st,tune-hs-dc-level = <2>;
+    st,enable-fs-rftime-tuning;
+    st,enable-hs-rftime-reduction;
+    st,trim-hs-current = <15>;
+    st,trim-hs-impedance = <1>;
+    st,tune-squelch-level = <3>;
+    st,tune-hs-rx-offset = <2>;
+    st,no-lsfs-sc;
+};
+
+&sram {
+    dma_pool: dma_pool@0 {
+        reg = <0x50000 0x10000>;
+        pool;
+    };
+};
+
+&spi5 {
+    #address-cells = <1>;
+    #size-cells = <0>;
+    reg = <0x4C003000 0x400>;
+    status = "disabled";
+};

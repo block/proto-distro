@@ -1,0 +1,117 @@
+#!/bin/sh
+# This script is intended to be used as a check for whether the system should
+# run in secure mode. It exits 0 for a positive secure check or when a release
+# build cannot determine security state and must fail closed.
+#
+# A positive secure check requires:
+# - Running on a release variant of the OS
+# - lock_ctrl_ta_client reports "Device status: CLOSED"
+# - attestation_ta_client reports "Device certificate: VALID"
+
+set -u
+
+print_exit_message() {
+  echo "$1"
+  # Print optional detail message if provided
+  if [ $# -ge 2 ] && [ -n "$2" ]; then
+    printf '%s\n' "$2"
+  fi
+}
+
+exit_with_status() {
+  status="$1"
+  shift
+  print_exit_message "$@"
+  exit "$status"
+}
+
+exit_non_secure() {
+  exit_with_status 1 "$@"
+}
+
+exit_secure() {
+  exit_with_status 0 "$@"
+}
+
+os_variant="$(sed -n 's/^VARIANT=//p' /etc/os-release 2>/dev/null | tr -d '"')"
+
+# Only release variant enforces lock state. For other variants,
+# treat the system as non-secure to keep SSH available.
+if [ "$os_variant" != "release" ]; then
+  exit_non_secure "Non-release variant (${os_variant:-unknown}); defaulting to non-secure mode."
+fi
+
+# Check if running as root
+if [ "$(id -u)" -ne 0 ]; then
+  exit_secure "$0: Need to be run with root permission. Defaulting to secure mode."
+fi
+
+# Runtime secure override (force-secure only).
+# The marker is set/cleared at runtime through the authenticated management API.
+# This override can ONLY promote a device to secure, never demote one, so a
+# forged marker gains an attacker nothing (it would only lock their own device
+# down / disable SSH). That asymmetry is why no signature is required here.
+SECURE_OVERRIDE=/etc/secure_override
+if [ -f "$SECURE_OVERRIDE" ]; then
+  echo "Secure override present. Forcing secure mode."
+  exit 0
+fi
+
+if ! command -v lock_ctrl_ta_client >/dev/null 2>&1; then
+  exit_secure "lock_ctrl_ta_client not found. Defaulting to secure mode."
+fi
+
+status_output="$(lock_ctrl_ta_client status 2>&1)" && status_rc=0 || status_rc=$?
+
+# lock_ctrl_ta_client exits with code 7 when RPMB key is not programmed.
+if [ "$status_rc" -eq 7 ]; then
+  exit_non_secure "RPMB key is not provisioned. Defaulting to non-secure mode." "$status_output"
+fi
+if [ "$status_rc" -ne 0 ]; then
+  exit_secure "Failed to query lock status. Defaulting to secure mode." "$status_output"
+fi
+
+device_status_line="$(printf '%s\n' "$status_output" | grep -m1 '^Device status:')" || device_status_line=""
+device_status_value="${device_status_line#Device status: }"
+
+if [ -z "$device_status_line" ] || [ -z "$device_status_value" ]; then
+  exit_secure "Unable to parse lock status. Defaulting to secure mode." "$status_output"
+fi
+
+if [ "$device_status_value" = "UNKNOWN" ]; then
+  exit_secure "Device status is UNKNOWN. Defaulting to secure mode."
+fi
+
+if [ "$device_status_value" = "CLOSED" ]; then
+  echo "Device status is CLOSED."
+
+  # Check if device certificate is still valid (not issued by a revoked issuer)
+  if command -v attestation_ta_client >/dev/null 2>&1; then
+    cert_output="$(attestation_ta_client is_cert_valid 2>&1)" && cert_rc=0 || cert_rc=$?
+
+    if [ "$cert_rc" -ne 0 ]; then
+      exit_secure "Failed to query certificate validity. Defaulting to secure mode."
+    fi
+
+    cert_status="$(printf '%s\n' "$cert_output" | grep -m1 '^Device certificate:')" || cert_status=""
+    cert_status_value="${cert_status#Device certificate: }"
+
+    case "$cert_status_value" in
+      VALID)
+        echo "Device certificate is VALID. System is secure."
+        exit 0
+        ;;
+      "NOT FOUND")
+        exit_non_secure "Device certificate not found. Defaulting to non-secure mode."
+        ;;
+      *)
+        exit_non_secure "Device certificate is ${cert_status_value}. Defaulting to non-secure mode."
+        ;;
+    esac
+  else
+    exit_secure "attestation_ta_client not found. Defaulting to secure mode."
+  fi
+fi
+
+echo "Device status is ${device_status_value}. System is insecure."
+exit 1

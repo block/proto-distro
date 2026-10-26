@@ -1,0 +1,49 @@
+software = {
+    version = "@@MEMFAULT_SOFTWARE_VERSION@@-@@VARIANT@@";
+
+    @@MEMFAULT_HARDWARE_VERSION@@ = {
+        hardware-compatibility: [ "1.0" ];
+        stable: {
+            copy1: {
+                images: (
+                    {
+                        filename = "@@SWUPDATE_IMAGES@@";
+                        type = "raw";
+                        device = "/dev/mmcblk0p@@UBOOT_ENV_PARTITION_A@@";
+                        compressed = "zlib";
+                        installed-directly = true;
+                        sha256 = "$swupdate_get_sha256(@@SWUPDATE_IMAGES@@)";
+                    }
+                );
+                uboot: (
+                    {
+                        name = "rootpart";
+                        value = "@@UBOOT_ENV_PARTITION_A@@";
+                    }
+                );
+                @@SWUPDATE_ROOTFS_SCRIPTS@@
+            }
+
+            copy2: {
+                images: (
+                    {
+                        filename = "@@SWUPDATE_IMAGES@@";
+                        type = "raw";
+                        device = "/dev/mmcblk0p@@UBOOT_ENV_PARTITION_B@@";
+                        compressed = "zlib";
+                        installed-directly = true;
+                        sha256 = "$swupdate_get_sha256(@@SWUPDATE_IMAGES@@)";
+                    }
+                );
+                uboot: (
+                    {
+                        name = "rootpart";
+                        value = "@@UBOOT_ENV_PARTITION_B@@";
+                    }
+                );
+                @@SWUPDATE_ROOTFS_SCRIPTS@@
+            }
+        }
+        @@SWUPDATE_FIP_DESCRIPTION@@
+    }
+}

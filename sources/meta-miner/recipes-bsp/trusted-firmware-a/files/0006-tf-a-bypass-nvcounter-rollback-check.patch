@@ -1,0 +1,96 @@
+Replace the TAMP backup-register non-volatile counter on STM32MP13 with
+an OTP-backed monotonic counter at OTP word index 11. The TAMP register
+is RAM-backed and clears on power loss without a backup battery, which
+the Control Board lacks, so it cannot enforce rollback protection across
+reset cycles.
+
+plat_get_nv_ctr returns popcount(OTP[11]) and logs the observed value at
+NOTICE level.
+
+plat_set_nv_ctr advances the counter by burning OTP bits sequentially
+from the LSB (0x0 -> 0x1 -> 0x3 -> 0x7 -> ... -> 0xFFFFFFFF). It refuses
+to advance from any non-sequential pattern so a partially-burned word
+cannot silently overshoot the intended counter value. Burns are issued
+via bsec_program_otp.
+
+--- a/plat/st/common/stm32mp_trusted_boot.c
++++ b/plat/st/common/stm32mp_trusted_boot.c
+@@ -10,6 +10,7 @@
+ 
+ #include <common/debug.h>
+ #include <common/tbbr/cot_def.h>
++#include <drivers/st/bsec.h>
+ #include <drivers/st/stm32_hash.h>
+ #include <lib/fconf/fconf.h>
+ #include <lib/fconf/fconf_dyn_cfg_getter.h>
+@@ -171,19 +172,67 @@
+ 	return 0;
+ }
+ 
++#define NVCTR_OTP_IDX 11U
++#define NVCTR_MAX     32U
++
++static uint32_t nvctr_pattern_for_count(unsigned int count)
++{
++	return (count >= NVCTR_MAX) ? 0xFFFFFFFFU : ((1U << count) - 1U);
++}
++
+ int plat_get_nv_ctr(void *cookie, unsigned int *nv_ctr)
+ {
+-	*nv_ctr = mmio_read_32(TAMP_BASE + TAMP_COUNTR);
++	uint32_t otp_val;
+ 
++	if (stm32_get_otp_value_from_idx(NVCTR_OTP_IDX, &otp_val) != 0) {
++		return -EINVAL;
++	}
++
++	/* Monotonic counter = number of bits burned in OTP[11] (0..32). */
++	*nv_ctr = (unsigned int)__builtin_popcount(otp_val);
++	NOTICE("nvctr: OTP[%u]=0x%08x popcount=%u\n", NVCTR_OTP_IDX, otp_val, *nv_ctr);
++
+ 	return 0;
+ }
+ 
+ int plat_set_nv_ctr(void *cookie, unsigned int nv_ctr)
+ {
+-	while (mmio_read_32(TAMP_BASE + TAMP_COUNTR) != nv_ctr) {
+-		mmio_write_32(TAMP_BASE + TAMP_COUNTR, 1U);
++	uint32_t cur_val;
++	unsigned int cur_count;
++	uint32_t expected;
++	uint32_t target;
++
++	if (nv_ctr > NVCTR_MAX) {
++		ERROR("nvctr: requested counter %u exceeds max %u\n", nv_ctr, NVCTR_MAX);
++		return -EINVAL;
+ 	}
++	if (stm32_get_otp_value_from_idx(NVCTR_OTP_IDX, &cur_val) != 0) {
++		return -EINVAL;
++	}
+ 
++	/* Bits in OTP[11] must be burned sequentially from LSB up: 0x0,
++	 * 0x1, 0x3, 0x7, ..., 0xFFFFFFFF. Reject any non-sequential pattern
++	 * rather than risk overshooting the intended counter on advance. */
++	cur_count = (unsigned int)__builtin_popcount(cur_val);
++	expected = nvctr_pattern_for_count(cur_count);
++	if (cur_val != expected) {
++		ERROR("nvctr: OTP[%u] non-sequential pattern 0x%08x (expected 0x%08x for count %u)\n",
++		      NVCTR_OTP_IDX, cur_val, expected, cur_count);
++		return -EINVAL;
++	}
++
++	if (nv_ctr <= cur_count) {
++		/* Already at or past target; OTP cannot un-burn so this is fine. */
++		return 0;
++	}
++
++	target = nvctr_pattern_for_count(nv_ctr);
++	if (bsec_program_otp(target, NVCTR_OTP_IDX) != BSEC_OK) {
++		ERROR("nvctr: OTP[%u] burn to 0x%08x failed\n", NVCTR_OTP_IDX, target);
++		return -EIO;
++	}
++	NOTICE("nvctr: OTP[%u] advanced to 0x%08x (count=%u)\n", NVCTR_OTP_IDX, target, nv_ctr);
++
+ 	return 0;
+ }
+ 

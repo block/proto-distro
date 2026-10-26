@@ -1,0 +1,227 @@
+name: Publish Tools
+
+on:
+  push:
+    tags:
+      - "tools-*"
+  pull_request:
+    paths:
+      - ".github/workflows/tools-release.yml"
+      - "bin/**"
+      - "sources/meta-miner/recipes-devtools/avbtool/**"
+      - "tools/**"
+      - "go.work"
+      - "go.work.sum"
+      - ".goreleaser.tools.yml"
+
+jobs:
+  build:
+    name: Build tools (${{ matrix.os }}/${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            os: linux
+            arch: amd64
+            arch_suffix: amd64_v1
+          - runner: ubuntu-24.04-arm
+            os: linux
+            arch: arm64
+            arch_suffix: arm64_v8.0
+          - runner: macos-15-intel
+            os: darwin
+            arch: amd64
+            arch_suffix: amd64_v1
+          - runner: macos-15
+            os: darwin
+            arch: arm64
+            arch_suffix: arm64_v8.0
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.work
+          cache-dependency-path: |
+            go.work
+            tools/distro/go.sum
+            tools/cb_st_flasher/go.sum
+            tools/cb_st_flasher/go.mod
+            tools/go_fastboot/go.mod
+            tools/go_fastboot/go.sum
+            tools/flashimage/go.mod
+
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libusb-1.0-0-dev pkg-config
+
+      - name: Install macOS native dependencies
+        if: runner.os == 'macOS'
+        run: |
+          brew install libusb pkg-config
+          xcrun --find clang
+
+      - name: Test native tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkg-config --exists libusb-1.0
+          CGO_ENABLED=0 go test ./tools/distro/...
+          CGO_ENABLED=1 go test ./tools/cb_st_flasher/...
+          CGO_ENABLED=0 go test ./tools/flashimage/... ./tools/go_fastboot/...
+          (cd tools/go_fastboot && GOWORK=off CGO_ENABLED=0 go build -o "$RUNNER_TEMP/go_fastboot-standalone" ./cmd/go_fastboot)
+          (cd tools/cb_st_flasher && GOWORK=off CGO_ENABLED=1 go build -o "$RUNNER_TEMP/cb_st_flasher-standalone" ./cmd/cb_st_flasher)
+
+      - name: Race-test go_fastboot
+        if: matrix.os == 'linux' && matrix.arch == 'amd64'
+        run: CGO_ENABLED=1 go test -race ./tools/go_fastboot/...
+
+      - name: Build native release assets
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: build --clean --snapshot --single-target --config .goreleaser.tools.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+
+      - name: Stage and smoke-test native binaries
+        shell: bash
+        env:
+          TARGET_OS: ${{ matrix.os }}
+          TARGET_ARCH: ${{ matrix.arch }}
+          ARCH_SUFFIX: ${{ matrix.arch_suffix }}
+        run: |
+          set -euo pipefail
+          stage_dir="native-dist/${TARGET_OS}/${TARGET_ARCH}"
+          mkdir -p "$stage_dir"
+          cp "dist/distro_${TARGET_OS}_${ARCH_SUFFIX}/distro" "$stage_dir/"
+          cp "dist/opkg_inject_${TARGET_OS}_${ARCH_SUFFIX}/opkg-inject" "$stage_dir/"
+          cp "dist/cb_st_flasher_${TARGET_OS}_${ARCH_SUFFIX}/cb_st_flasher" "$stage_dir/"
+          cp "dist/go_fastboot_${TARGET_OS}_${ARCH_SUFFIX}/go_fastboot" "$stage_dir/"
+          "$stage_dir/distro" --help
+          "$stage_dir/opkg-inject" --help
+          "$stage_dir/cb_st_flasher" --help
+          "$stage_dir/go_fastboot" --help
+          "$stage_dir/go_fastboot" --version
+
+      - name: Upload native binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: tools-native-${{ matrix.os }}-${{ matrix.arch }}
+          path: native-dist/
+          if-no-files-found: error
+
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/tools-')
+    name: Package and publish tools release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Get version from tag
+        id: version
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#tools-}"
+          if [[ "$version" == "$GITHUB_REF_NAME" || -z "$version" ]]; then
+            echo "expected a tools-* tag, got: $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Get previous tag
+        id: previous_tag
+        shell: bash
+        run: |
+          previous_tag=$(git tag -l 'tools-[0-9]*' --sort=-version:refname | head -n2 | tail -n1)
+          echo "previous_tag=$previous_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Download native binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: tools-native-*
+          path: native-dist
+          merge-multiple: true
+
+      - name: Restore binary permissions
+        run: chmod +x native-dist/*/*/*
+
+      - name: Package release artifacts
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          output_dir=".github/release_artifacts"
+          rm -rf "$output_dir"
+          mkdir -p "$output_dir"
+
+          for os in darwin linux; do
+            bundle_name="distro-tools-${os}"
+            bundle_dir="$(mktemp -d)/${bundle_name}"
+            mkdir -p "$bundle_dir"
+
+            for arch in amd64 arm64; do
+              stage_dir="$(mktemp -d)"
+
+              cp "native-dist/${os}/${arch}/distro" "$stage_dir/"
+              cp "native-dist/${os}/${arch}/opkg-inject" "$stage_dir/"
+              cp "native-dist/${os}/${arch}/cb_st_flasher" "$stage_dir/"
+              cp "native-dist/${os}/${arch}/go_fastboot" "$stage_dir/"
+              cp "distro.yaml" "$stage_dir/"
+
+              tarball_name="${bundle_name}-${arch}.tar.gz"
+              tar -C "$stage_dir" -czf "$bundle_dir/$tarball_name" distro opkg-inject cb_st_flasher go_fastboot distro.yaml
+
+              rm -rf "$stage_dir"
+            done
+
+            (
+              cd "$(dirname "$bundle_dir")"
+              zip -rq "$GITHUB_WORKSPACE/$output_dir/${bundle_name}-${VERSION}.zip" "$(basename "$bundle_dir")"
+            )
+
+            rm -rf "$(dirname "$bundle_dir")"
+          done
+
+          (
+            cd "$output_dir"
+            shasum -a 256 ./*.zip > "distro-tools-${VERSION}-checksums.txt"
+          )
+
+      - name: Build release notes
+        id: build_changelog
+        uses: mikepenz/release-changelog-builder-action@v6
+        with:
+          configuration: .github/release-configs/tools.json
+          fromTag: ${{ steps.previous_tag.outputs.previous_tag }}
+          toTag: ${{ github.ref_name }}
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v3
+        with:
+          token: ${{ github.token }}
+          tag_name: ${{ github.ref_name }}
+          name: Tools ${{ steps.version.outputs.version }}
+          body: ${{ steps.build_changelog.outputs.changelog }}
+          files: .github/release_artifacts/*

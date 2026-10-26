@@ -1,0 +1,147 @@
+From: BTCM SW Team <btcm-sw-team@squareup.com>
+Subject: [PATCH] source: honor board verification policy and recover immediately
+
+Only the exact board-derived verify=n value skips script verification.
+Otherwise require a signed FIT configuration and a required control-DTB
+key, with no legacy/direct-image or unsigned-image fallback. Keep the
+explicit #bootscr boot entry point and print the verified marker only
+when configuration and payload verification both pass.
+
+On STM32MP13, dispatch verification rejection directly to the compiled
+UDP fastboot command, independent of the rejected script, scanner,
+bootcount and saved altbootcmd. Other builds retain normal error returns.
+No OTP or trusted keys are changed.
+
+Upstream-Status: Inappropriate [Proto signed-script boot policy]
+---
+diff --git a/cmd/source.c b/cmd/source.c
+--- a/cmd/source.c
++++ b/cmd/source.c
+@@ -17,13 +17,37 @@
+ #include <common.h>
+ #include <command.h>
+ #include <env.h>
++#include <hang.h>
+ #include <image.h>
+ #include <log.h>
+ #include <malloc.h>
+ #include <mapmem.h>
+ #include <asm/byteorder.h>
+ #include <asm/io.h>
++#include <asm/global_data.h>
++
++#if defined(CONFIG_FIT_SIGNATURE)
++DECLARE_GLOBAL_DATA_PTR;
++
++/* fit_config_verify() alone succeeds when no key is marked required. */
++static bool script_has_required_key(void)
++{
++	const void *fdt = gd_fdt_blob();
++	int signatures = fdt_path_offset(fdt, "/signature");
++	int node;
++
++	if (signatures < 0)
++		return false;
++	fdt_for_each_subnode(node, fdt, signatures) {
++		const char *required = fdt_getprop(fdt, node, FIT_KEY_REQUIRED, NULL);
+ 
++		if (required && !strcmp(required, "conf"))
++			return true;
++	}
++	return false;
++}
++#endif
++
+ #if defined(CONFIG_FIT)
+ /**
+  * get_default_image() - Return default property from /images
+@@ -42,6 +66,16 @@
+ }
+ #endif
+ 
++static int script_verification_failed(void)
++{
++#ifdef STM32MP_FASTBOOT_CMD
++	puts("Boot script verification failed; entering UDP fastboot\n");
++	run_command_list(STM32MP_FASTBOOT_CMD, -1, 0);
++	hang();
++#endif
++	return 1;
++}
++
+ int image_source_script(ulong addr, const char *fit_uname, const char *confname)
+ {
+ 	ulong		len;
+@@ -51,6 +85,9 @@
+ 	u32		*data;
+ 	int		verify;
+ 	void *buf;
++#if defined(CONFIG_FIT_SIGNATURE)
++	const char *verify_value;
++#endif
+ #if defined(CONFIG_FIT)
+ 	const void*	fit_hdr;
+ 	int		noffset;
+@@ -61,6 +98,23 @@
+ 	verify = env_get_yesno("verify");
+ 
+ 	buf = map_sysmem(addr, 0);
++#if defined(CONFIG_FIT_SIGNATURE)
++	/* Only the board-derived, exact unlocked value disables verification. */
++	verify_value = env_get("verify");
++	verify = !verify_value || strcmp(verify_value, "n");
++	if (verify) {
++		if (genimg_get_format(buf) != IMAGE_FORMAT_FIT || fit_uname) {
++			puts("Signed FIT script configuration required\n");
++			return script_verification_failed();
++		}
++		if (!script_has_required_key()) {
++			puts("No required FIT configuration key\n");
++			return script_verification_failed();
++		}
++		if (!confname)
++			confname = ""; /* Default configuration, never image fallback. */
++	}
++#endif
+ 	switch (genimg_get_format(buf)) {
+ #if defined(CONFIG_LEGACY_IMAGE_FORMAT)
+ 	case IMAGE_FORMAT_LEGACY:
+@@ -126,7 +180,7 @@
+ 			}
+ 
+ 			if (verify && fit_config_verify(fit_hdr, noffset))
+-				return 1;
++				return script_verification_failed();
+ 
+ 			noffset = fit_conf_get_prop_node(fit_hdr, noffset,
+ 							 FIT_SCRIPT_PROP);
+@@ -163,7 +217,7 @@
+ 		if (verify) {
+ 			if (!fit_image_verify(fit_hdr, noffset)) {
+ 				puts ("Bad Data Hash\n");
+-				return 1;
++				return script_verification_failed();
+ 			}
+ 		}
+ 
+@@ -182,6 +236,8 @@
+ 		return 1;
+ 	}
+ 
++	if (IS_ENABLED(CONFIG_FIT_SIGNATURE) && verify)
++		puts("Boot script FIT signature and payload verified\n");
+ 	debug("** Script length: %ld\n", len);
+ 	return run_command_list((char *)data, len, 0);
+ }
+diff --git a/include/config_distro_bootcmd.h b/include/config_distro_bootcmd.h
+--- a/include/config_distro_bootcmd.h
++++ b/include/config_distro_bootcmd.h
+@@ -451,7 +451,7 @@
+ 	"boot_a_script="                                                  \
+ 		"load ${devtype} ${devnum}:${distro_bootpart} "           \
+ 			"${scriptaddr} ${prefix}${script}; "              \
+-		"source ${scriptaddr}\0"                                  \
++		"source ${scriptaddr}#bootscr\0"                          \
+ 	\
+ 	"scan_dev_for_scripts="                                           \
+ 		"for script in ${boot_scripts}; do "                      \

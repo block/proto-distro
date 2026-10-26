@@ -1,0 +1,202 @@
+From bcc85b96b5ffbbce19a89747138feb873d918915 Mon Sep 17 00:00:00 2001
+From: Sean Anderson <sean.anderson@seco.com>
+Date: Mon, 12 Dec 2022 14:12:11 -0500
+Subject: [PATCH] cmd: source: Support specifying config name
+
+The source command previously selected script images without verifying
+configuration signatures. Add the bootm-style #config syntax and verify the
+configuration before resolving its script and checking the payload hash.
+Use an explicit #config to prevent fallback to an unsigned default image.
+
+Backported to v2021.10-stm32mp-r2.1: use the three-argument
+fit_conf_get_prop_node(), update the existing STM32/SDP script callers,
+and omit bootstd and upstream test files absent from this version.
+
+Upstream-Status: Backport [https://github.com/u-boot/u-boot/commit/bcc85b96b5ffbbce19a89747138feb873d918915]
+Signed-off-by: Sean Anderson <sean.anderson@seco.com>
+Reviewed-by: Simon Glass <sjg@chromium.org>
+---
+diff --git a/cmd/source.c b/cmd/source.c
+--- a/cmd/source.c
++++ b/cmd/source.c
+@@ -42,7 +42,7 @@
+ }
+ #endif
+ 
+-int image_source_script(ulong addr, const char *fit_uname)
++int image_source_script(ulong addr, const char *fit_uname, const char *confname)
+ {
+ 	ulong		len;
+ #if defined(CONFIG_LEGACY_IMAGE_FORMAT)
+@@ -112,19 +112,46 @@
+ 			return 1;
+ 		}
+ 
+-		if (!fit_uname)
+-			fit_uname = get_default_image(fit_hdr);
+-
+ 		if (!fit_uname) {
+-			puts("No FIT subimage unit name\n");
+-			return 1;
+-		}
+-
+-		/* get script component image node offset */
+-		noffset = fit_image_get_node (fit_hdr, fit_uname);
+-		if (noffset < 0) {
+-			printf ("Can't find '%s' FIT subimage\n", fit_uname);
+-			return 1;
++			/* If confname is empty, use the default */
++			if (confname && *confname)
++				noffset = fit_conf_get_node(fit_hdr, confname);
++			else
++				noffset = fit_conf_get_node(fit_hdr, NULL);
++			if (noffset < 0) {
++				if (!confname)
++					goto fallback;
++				printf("Could not find config %s\n", confname);
++				return 1;
++			}
++
++			if (verify && fit_config_verify(fit_hdr, noffset))
++				return 1;
++
++			noffset = fit_conf_get_prop_node(fit_hdr, noffset,
++							 FIT_SCRIPT_PROP);
++			if (noffset < 0) {
++				if (!confname)
++					goto fallback;
++				printf("Could not find script in %s\n", confname);
++				return 1;
++			}
++		} else {
++fallback:
++			if (!fit_uname || !*fit_uname)
++				fit_uname = get_default_image(fit_hdr);
++			if (!fit_uname) {
++				puts("No FIT subimage unit name\n");
++				return 1;
++			}
++
++			/* get script component image node offset */
++			noffset = fit_image_get_node(fit_hdr, fit_uname);
++			if (noffset < 0) {
++				printf("Can't find '%s' FIT subimage\n",
++				       fit_uname);
++				return 1;
++			}
+ 		}
+ 
+ 		if (!fit_image_check_type (fit_hdr, noffset, IH_TYPE_SCRIPT)) {
+@@ -166,7 +193,7 @@
+ {
+ 	ulong addr;
+ 	int rcode;
+-	const char *fit_uname = NULL;
++	const char *fit_uname = NULL, *confname = NULL;
+ 
+ 	/* Find script image */
+ 	if (argc < 2) {
+@@ -177,6 +204,9 @@
+ 				      &fit_uname)) {
+ 		debug("*  source: subimage '%s' from FIT image at 0x%08lx\n",
+ 		      fit_uname, addr);
++	} else if (fit_parse_conf(argv[1], image_load_addr, &addr, &confname)) {
++		debug("*  source: config '%s' from FIT image at 0x%08lx\n",
++		      confname, addr);
+ #endif
+ 	} else {
+ 		addr = hextoul(argv[1], NULL);
+@@ -184,21 +214,22 @@
+ 	}
+ 
+ 	printf ("## Executing script at %08lx\n", addr);
+-	rcode = image_source_script(addr, fit_uname);
++	rcode = image_source_script(addr, fit_uname, confname);
+ 	return rcode;
+ }
+ 
+ #ifdef CONFIG_SYS_LONGHELP
+ static char source_help_text[] =
+-	"[addr]\n"
+-	"\t- run script starting at addr\n"
+-	"\t- A valid image header must be present"
+-#if defined(CONFIG_FIT)
+-	"\n"
+-	"For FIT format uImage addr must include subimage\n"
+-	"unit name in the form of addr:<subimg_uname>"
+-#endif
+-	"";
++#if defined(CONFIG_FIT)
++	"[<addr>][:[<image>]|#[<config>]]\n"
++	"\t- Run script starting at addr\n"
++	"\t- A FIT config name or subimage name may be specified with : or #\n"
++	"\t  (like bootm). If the image or config name is omitted, the\n"
++	"\t  default is used.";
++#else
++	"[<addr>]\n"
++	"\t- Run script starting at addr";
++#endif
+ #endif
+ 
+ U_BOOT_CMD(
+diff --git a/include/image.h b/include/image.h
+--- a/include/image.h
++++ b/include/image.h
+@@ -668,15 +668,20 @@
+ 
+ /**
+  * image_source_script() - Execute a script
++ * @addr: Address of script
++ * @fit_uname: FIT subimage name
++ * @confname: FIT config name. The subimage is chosen using FIT_SCRIPT_PROP.
+  *
+  * Executes a U-Boot script at a particular address in memory. The script should
+  * have a header (FIT or legacy) with the script type (IH_TYPE_SCRIPT).
+  *
+- * @addr: Address of script
+- * @fit_uname: FIT subimage name
+- * @return result code (enum command_ret_t)
+- */
+-int image_source_script(ulong addr, const char *fit_uname);
++ * An empty @fit_uname selects the default image; an empty @confname selects
++ * the default config. If both are non-NULL, @confname is ignored. If both
++ * are NULL, try the default config, then the default image.
++ *
++ * Return: result code (enum command_ret_t)
++ */
++int image_source_script(ulong addr, const char *fit_uname, const char *confname);
+ 
+ #ifndef USE_HOSTCC
+ /**
+@@ -985,6 +990,7 @@
+ #define FIT_FPGA_PROP		"fpga"
+ #define FIT_FIRMWARE_PROP	"firmware"
+ #define FIT_STANDALONE_PROP	"standalone"
++#define FIT_SCRIPT_PROP		"script"
+ 
+ #define FIT_MAX_HASH_LEN	HASH_MAX_DIGEST_SIZE
+ 
+diff --git a/arch/arm/mach-stm32mp/cmd_stm32prog/cmd_stm32prog.c b/arch/arm/mach-stm32mp/cmd_stm32prog/cmd_stm32prog.c
+--- a/arch/arm/mach-stm32mp/cmd_stm32prog/cmd_stm32prog.c
++++ b/arch/arm/mach-stm32mp/cmd_stm32prog/cmd_stm32prog.c
+@@ -154,7 +154,7 @@
+ 			do_bootz(cmdtp, 0, 4, bootm_argv);
+ 	}
+ 	if (data->script)
+-		image_source_script(data->script, "script@stm32prog");
++		image_source_script(data->script, NULL, NULL);
+ 
+ 	if (reset) {
+ 		puts("Reset...\n");
+diff --git a/drivers/usb/gadget/f_sdp.c b/drivers/usb/gadget/f_sdp.c
+--- a/drivers/usb/gadget/f_sdp.c
++++ b/drivers/usb/gadget/f_sdp.c
+@@ -866,7 +866,7 @@
+ 			jump_to_image_no_args(&spl_image);
+ #else
+ 			/* In U-Boot, allow jumps to scripts */
+-			image_source_script(sdp_func->jmp_address, "script@1");
++			image_source_script(sdp_func->jmp_address, NULL, NULL);
+ #endif
+ 		}
+ 

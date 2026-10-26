@@ -1,0 +1,13 @@
+[Unit]
+After=miner-boot.service network-online.target nss-lookup.target
+Requires=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh "/usr/bin/set-timezone.sh"
+Restart=on-failure
+RestartSec=5
+RemainAfterExit=true
+
+[Install]
+WantedBy=multi-user.target

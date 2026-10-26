@@ -1,0 +1,60 @@
+diff --git a/drivers/st/pmic/stm32mp_pmic.c b/drivers/st/pmic/stm32mp_pmic.c
+index 961cdcc56..56e79694b 100644
+--- a/drivers/st/pmic/stm32mp_pmic.c
++++ b/drivers/st/pmic/stm32mp_pmic.c
+@@ -347,7 +347,7 @@ int pmic_ddr_power_init(enum ddr_type ddr_type)
+ int pmic_voltages_init(void)
+ {
+ #if STM32MP13
+-	struct rdev *buck1, *buck4;
++	struct rdev *buck1, *buck4, *ldo1, *ldo2;
+ 	int status;
+ 
+ 	buck1 = regulator_get_by_name("buck1");
+@@ -360,6 +360,16 @@ int pmic_voltages_init(void)
+ 		return -ENOENT;
+ 	}
+ 
++	ldo1 = regulator_get_by_name("ldo1");
++	if (ldo1 == NULL) {
++		return -ENOENT;
++	}
++
++	ldo2 = regulator_get_by_name("ldo2");
++	if (ldo2 == NULL) {
++		return -ENOENT;
++	}
++
+ 	status = regulator_set_min_voltage(buck1);
+ 	if (status != 0) {
+ 		return status;
+@@ -369,6 +379,29 @@ int pmic_voltages_init(void)
+ 	if (status != 0) {
+ 		return status;
+ 	}
++
++	status = regulator_set_min_voltage(ldo1);
++	if (status != 0) {
++		return status;
++	}
++
++	status = regulator_set_min_voltage(ldo2);
++	if (status != 0) {
++		return status;
++	}
++
++	INFO("Enabling LDO1...\n");
++	status = regulator_enable(ldo1);
++	if (status != 0) {
++		return status;
++	}
++
++	INFO("Enabling LDO2...\n");
++	status = regulator_enable(ldo2);
++	if (status != 0) {
++		return status;
++	}
++
+ #endif
+ 
+ 	return 0;

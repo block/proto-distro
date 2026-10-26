@@ -1,0 +1,204 @@
+From 8985d2b43382845537b9c3ce5fb7123c756cd7ab Mon Sep 17 00:00:00 2001
+From: BTCM SW Team <btcm-sw-team@squareup.com>
+Date: Wed, 1 Apr 2026 12:02:57 -0400
+Subject: [PATCH] Simplify boot env: remove unused boot targets
+
+Remove PXE, UBIFS, USB, and MMC0 boot targets. Simplify
+bootcmd_stm32mp by removing NAND/NOR/UBIFS branches and env_check.
+Drop STM32MP_EXTRA (env_check, boot_net_usb_start).
+
+Remove forced CMD_PXE and CMD_SYSBOOT from DISTRO_DEFAULTS.
+Guard tftp_start() with CONFIG_CMD_TFTPBOOT.
+---
+ Kconfig                               |  2 -
+ include/configs/stm32mp13_common.h    | 81 ++++++++++++++-------------
+ include/configs/stm32mp13_st_common.h | 15 +----
+ net/net.c                             |  4 ++
+ 4 files changed, 49 insertions(+), 53 deletions(-)
+
+diff --git a/Kconfig b/Kconfig
+index a6c42b902f7..1c0821349f0 100644
+--- a/Kconfig
++++ b/Kconfig
+@@ -176,8 +176,6 @@ config DISTRO_DEFAULTS
+ 	select CMD_FS_GENERIC
+ 	select CMD_PART if PARTITIONS
+ 	select CMD_PING if CMD_NET
+-	select CMD_PXE if NET
+-	select CMD_SYSBOOT
+ 	select ENV_VARS_UBOOT_CONFIG
+ 	select HUSH_PARSER
+ 	select SUPPORT_RAW_INITRD
+diff --git a/include/configs/stm32mp13_common.h b/include/configs/stm32mp13_common.h
+index 54ad1a2e73f..3c8346af1d7 100644
+--- a/include/configs/stm32mp13_common.h
++++ b/include/configs/stm32mp13_common.h
+@@ -67,58 +67,64 @@
+ #define BOOT_TARGET_MMC1(func)
+ #endif
+ 
+-#ifdef CONFIG_NET
+-#define BOOT_TARGET_PXE(func)	func(PXE, pxe, na)
+-#else
+-#define BOOT_TARGET_PXE(func)
+-#endif
+-
+-#ifdef CONFIG_CMD_UBIFS
+-#define BOOT_TARGET_UBIFS(func)	func(UBIFS, ubifs, 0)
+-#else
+-#define BOOT_TARGET_UBIFS(func)
+-#endif
+-
+-#ifdef CONFIG_CMD_USB
+-#define BOOT_TARGET_USB(func)	func(USB, usb, 0)
+-#else
+-#define BOOT_TARGET_USB(func)
+-#endif
+-
+ #define BOOT_TARGET_DEVICES(func)	\
+-	BOOT_TARGET_MMC1(func)		\
+-	BOOT_TARGET_UBIFS(func)		\
+-	BOOT_TARGET_MMC0(func)		\
+-	BOOT_TARGET_USB(func)		\
+-	BOOT_TARGET_PXE(func)
++	BOOT_TARGET_MMC1(func)
+ 
+ #define CONFIG_ENV_FLAGS_LIST_STATIC \
+-	"bootcmd:so,bootcmd_stm32mp:so,distro_bootcmd:so,bootcmd_mmc1:so,mmc_boot:so,scan_dev_for_boot_part:so,verify:bo,"
++	"bootcmd:so,"			\
++	"bootcmd_stm32mp:so,"		\
++	"distro_bootcmd:so,"		\
++	"bootcmd_mmc1:so,"		\
++	"mmc_boot:so,"			\
++	"scan_dev_for_boot_part:so,"	\
++	"scan_dev_for_boot:so,"		\
++	"scan_dev_for_scripts:so,"	\
++	"scan_dev_for_extlinux:so,"	\
++	"scan_dev_for_efi:so,"		\
++	"boot_a_script:so,"		\
++	"boot_scripts:so,"		\
++	"boot_prefixes:so,"		\
++	"boot_extlinux:so,"		\
++	"boot_efi_binary:so,"		\
++	"boot_efi_bootmgr:so,"		\
++	"boot_syslinux_conf:so,"	\
++	"boot_targets:so,"		\
++	"boot_device:so,"		\
++	"boot_instance:so,"		\
++	"kernel_addr_r:so,"		\
++	"kernel_boot_conf:so,"		\
++	"loadaddr:so,"			\
++	"scriptaddr:so,"		\
++	"fdt_addr_r:so,"		\
++	"console:so,"			\
++	"devnum:so,"			\
++	"a_partnum:so,"			\
++	"b_partnum:so,"			\
++	"a_part_blk_addr:so,"		\
++	"b_part_blk_addr:so,"		\
++	"recovery_part_blk_addr:so,"	\
++	"recovery_part_copy_blk_cnt:so,"\
++	"recovery_partnum:so,"		\
++	"data_part_blk_addr:so,"	\
++	"data_partnum:so,"		\
++	"rootfs_part_size:so,"		\
++	"bootlimit:so,"			\
++	"verify:bo,"
+ 
+ /*
+- * default bootcmd for stm32mp13:
++ * default bootcmd for stm32mp13 miner:
+  * for serial/usb: execute the stm32prog command
+- * for mmc boot (eMMC, SD card), distro boot on the same mmc device
+- * for nand or spi-nand boot, distro boot with ubifs on UBI partition
+- * for nor boot, use the default distro order in ${boot_targets}
++ * for mmc boot, distro boot on the same mmc device
+  */
+ #define STM32MP_BOOTCMD "bootcmd_stm32mp=" \
+ 	"echo \"Boot over ${boot_device}${boot_instance}!\";" \
+ 	"if test ${boot_device} = serial || test ${boot_device} = usb;" \
+ 	"then stm32prog ${boot_device} ${boot_instance}; " \
+ 	"else " \
+-		"run env_check;" \
+-		"if test ${boot_device} = mmc;" \
+-		"then env set boot_targets \"mmc${boot_instance}\"; fi;" \
+-		"if test ${boot_device} = nand ||" \
+-		  " test ${boot_device} = spi-nand ;" \
+-		"then env set boot_targets ubifs0; fi;" \
+ 		"run distro_bootcmd;" \
+ 	"fi;\0"
+ 
+-#define STM32MP_EXTRA \
+-	"env_check=if env info -p -d -q; then env save; fi\0" \
+-	"boot_net_usb_start=true\0"
++#define STM32MP_EXTRA ""
+ 
+ #ifndef STM32MP_BOARD_EXTRA_ENV
+ #define STM32MP_BOARD_EXTRA_ENV
+@@ -159,7 +165,6 @@
+ 	STM32MP_BOOTCMD \
+ 	BOOTENV \
+ 	STM32MP_BOOT_PART_LAYOUT \
+-	STM32MP_EXTRA \
+ 	STM32MP_BOARD_EXTRA_ENV
+ 
+ #endif /* ifdef CONFIG_DISTRO_DEFAULTS*/
+diff --git a/include/configs/stm32mp13_st_common.h b/include/configs/stm32mp13_st_common.h
+index ff2c45dc7e7..e6c69fccb2e 100644
+--- a/include/configs/stm32mp13_st_common.h
++++ b/include/configs/stm32mp13_st_common.h
+@@ -21,25 +21,15 @@
+ 
+ #ifdef CONFIG_EXTRA_ENV_SETTINGS
+ /*
+- * default bootcmd for stm32mp13 STMicroelectronics boards:
++ * default bootcmd for stm32mp13 miner boards:
+  * for serial/usb: execute the stm32prog command
+- * for mmc boot (eMMC, SD card), distro boot on the same mmc device
+- * for nand or spi-nand boot, distro boot with ubifs on UBI partition
+- * for nor boot, distro boot on SD card = mmc0 ONLY !
++ * for mmc boot, distro boot on the same mmc device
+  */
+ #define ST_STM32MP13_BOOTCMD "bootcmd_stm32mp=" \
+ 	"echo \"Boot over ${boot_device}${boot_instance}!\";" \
+ 	"if test ${boot_device} = serial || test ${boot_device} = usb;" \
+ 	"then stm32prog ${boot_device} ${boot_instance}; " \
+ 	"else " \
+-		"run env_check;" \
+-		"if test ${boot_device} = mmc;" \
+-		"then env set boot_targets \"mmc${boot_instance}\"; fi;" \
+-		"if test ${boot_device} = nand ||" \
+-		  " test ${boot_device} = spi-nand ;" \
+-		"then env set boot_targets ubifs0; fi;" \
+-		"if test ${boot_device} = nor;" \
+-		"then env set boot_targets mmc0; fi;" \
+ 		"run distro_bootcmd;" \
+ 	"fi;\0"
+ 
+@@ -50,7 +40,6 @@
+ 	ST_STM32MP13_BOOTCMD \
+ 	BOOTENV \
+ 	STM32MP_BOOT_PART_LAYOUT \
+-	STM32MP_EXTRA \
+ 	STM32MP_BOARD_EXTRA_ENV
+ 
+ #endif
+diff --git a/net/net.c b/net/net.c
+index c2992a0908b..4fabf60116f 100644
+--- a/net/net.c
++++ b/net/net.c
+@@ -335,7 +335,11 @@ void net_auto_load(void)
+ #endif
+ 		return;
+ 	}
++#ifdef CONFIG_CMD_TFTPBOOT
+ 	tftp_start(TFTPGET);
++#else
++	net_set_state(NETLOOP_SUCCESS);
++#endif
+ }
+ 
+ static int net_init_loop(void)
+-- 
+2.53.0
+

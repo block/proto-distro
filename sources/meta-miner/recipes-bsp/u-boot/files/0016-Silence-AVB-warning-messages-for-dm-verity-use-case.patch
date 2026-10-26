@@ -1,0 +1,60 @@
+From 3fa1c8e284c57177564fa083bb0095b0bcedb557 Mon Sep 17 00:00:00 2001
+From: Bart Kosciarz <bkosciarz@squareup.com>
+Date: Fri, 10 Oct 2025 00:00:00 -0700
+Subject: [PATCH 16/17] Silence AVB warning messages for dm-verity use case
+
+When using AVB for dm-verity verification without OP-TEE TA AVB
+support, remove unnecessary warning messages that appear during
+normal operation:
+- "read_is_device_unlocked not supported yet"
+- "read_rollback_index not supported yet"
+- "Can't find partition 'vbmeta_a'" (expected when using embedded footer)
+
+These messages are informational and don't indicate errors in our
+dm-verity use case where:
+1. We use embedded vbmeta footers in rootfs partitions
+2. We don't use OP-TEE for rollback index or lock state storage
+3. Device lock state and rollback index have safe defaults
+
+This makes the boot output cleaner while maintaining the same
+functionality.
+
+%% original patch: 0001-Silence-AVB-warning-messages-for-dm-verity-use-case.patch
+---
+ common/avb_verify.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/common/avb_verify.c b/common/avb_verify.c
+index d57d8533b1d..aeb164f05f0 100644
+--- a/common/avb_verify.c
++++ b/common/avb_verify.c
+@@ -269,7 +269,7 @@ static struct mmc_part *get_partition(AvbOps *ops, const char *partition)
+ 
+ 	ret = part_get_info_by_name(mmc_blk, partition, &part->info);
+ 	if (ret < 0) {
+-		printf("Can't find partition '%s'\n", partition);
++		/* Partition not found - this is expected for vbmeta with embedded footers */
+ 		goto err;
+ 	}
+ 
+@@ -582,7 +582,7 @@ static AvbIOResult read_rollback_index(AvbOps *ops,
+ {
+ #ifndef CONFIG_OPTEE_TA_AVB
+ 	/* For now we always return 0 as the stored rollback index. */
+-	printf("%s not supported yet\n", __func__);
++	/* Rollback index not implemented, using default value 0 */
+ 
+ 	if (out_rollback_index)
+ 		*out_rollback_index = 0;
+@@ -665,7 +665,7 @@ static AvbIOResult read_is_device_unlocked(AvbOps *ops, bool *out_is_unlocked)
+ #ifndef CONFIG_OPTEE_TA_AVB
+ 	/* For now we always return that the device is unlocked. */
+ 
+-	printf("%s not supported yet\n", __func__);
++	/* Device lock state not implemented, treating as unlocked */
+ 
+ 	*out_is_unlocked = true;
+ 
+-- 
+2.53.0
+

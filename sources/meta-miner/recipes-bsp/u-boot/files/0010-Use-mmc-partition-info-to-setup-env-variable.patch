@@ -1,0 +1,175 @@
+From 23481a692d3f4f11def9090674f54fe7b62aaafd Mon Sep 17 00:00:00 2001
+From: BTCM SW Team <btcm-sw-team@squareup.com>
+Date: Thu, 29 May 2025 16:00:28 -0400
+Subject: [PATCH 10/17] Use mmc partition info to setup env variable
+
+%% original patch: 0001-Use-mmc-partition-info-to-setup-env-variable.patch
+---
+ board/st/stm32mp1/stm32mp1.c | 106 ++++++++++++++++++++++++++++++++++-
+ disk/part.c                  |   2 +-
+ include/part.h               |   2 +
+ 3 files changed, 108 insertions(+), 2 deletions(-)
+
+diff --git a/board/st/stm32mp1/stm32mp1.c b/board/st/stm32mp1/stm32mp1.c
+index ec000c8c0f9..7c356b32ab4 100644
+--- a/board/st/stm32mp1/stm32mp1.c
++++ b/board/st/stm32mp1/stm32mp1.c
+@@ -52,6 +52,10 @@
+ #include <usb/dwc2_udc.h>
+ #include <button.h>
+ #include <dt-bindings/leds/common.h>
++#include <mmc.h>
++#include <part.h>
++#include <blk.h>
++#include <stdio.h>
+ 
+ /* SYSCFG registers */
+ #define SYSCFG_BOOTR		0x00
+@@ -96,6 +100,8 @@ DECLARE_GLOBAL_DATA_PTR;
+ 
+ #define PROTO_CB_DEFAULT_DEVNUM 1
+ 
++static int proto_cb_mmc_devnum = -1;
++
+ typedef enum {
+ 	PROTO_IO_BOARD_DEFAULT = 0,
+ 	PROTO_IO_BOARD_RGB = 0x1,
+@@ -781,12 +787,110 @@ static void proto_cb_board_probe_io_board(void) {
+ 	}
+ }
+ 
++static int proto_cb_get_part_info(struct blk_desc *mmc_dev, const char *name, struct disk_partition *info) {
++	struct part_driver *part_drv = NULL;
++
++	part_drv = part_driver_lookup_type(mmc_dev);
++	if (!part_drv) {
++		log_err("Unknown partition table type %x\n", mmc_dev->part_type);
++		return -ENOENT;
++	}
++
++	for (int i = 1; i < part_drv->max_entries; i++) {
++		int ret = part_drv->get_info(mmc_dev, i, info);
++		if (ret != 0) {
++			break;
++		}
++		if (strcmp(name, (const char *)info->name) == 0) {
++			/* matched */
++			return i;
++		}
++	}
++	return -ENOENT;
++}
++
++static void proto_cb_set_hostname(void){
++	char hostname[32];
++	unsigned char mac_bytes[4] = {0};
++	int ret = fuse_read(0, 58, mac_bytes);
++	if (ret) {
++		log_err("Failed to read the MAC ID!");
++	}
++
++	snprintf(hostname, sizeof(hostname), "proto-miner-%02X%02X", mac_bytes[0], mac_bytes[1]);
++	log_info("Setting hostname to %s\n", hostname);
++	env_set("hostname", hostname);
++}
++
++static void proto_cb_init_env_vars(void) {
++	log_info("Init Proto CB env variables.\n");
++	proto_cb_mmc_devnum = env_get_ulong("devnum", 10, PROTO_CB_DEFAULT_DEVNUM);
++
++	struct blk_desc *mmc_dev = blk_get_devnum_by_type(IF_TYPE_MMC, proto_cb_mmc_devnum);
++	if (mmc_dev == NULL) {
++		log_err("mmc blk desc get fail. %d\n", proto_cb_mmc_devnum);
++		return;
++	}
++	if (!mmc_dev) {
++		log_err("Aborting env variable init.\n");
++		return;
++	}
++
++	struct disk_partition part_info;
++	int ret = proto_cb_get_part_info(mmc_dev, "rootfs_a", &part_info);
++	if (ret < 0) {
++		log_err("Unable to find rootfs_a partition.\n");
++	} else {
++		env_set_ulong("a_partnum", ret);
++		// Default rootpart to partition A
++		env_set_ulong("rootpart", ret);
++	}
++
++	ret = proto_cb_get_part_info(mmc_dev, "rootfs_b", &part_info);
++	if (ret < 0) {
++		log_err("Unable to find rootfs_b partition.\n");
++	} else {
++		env_set_ulong("b_partnum", ret);
++	}
++
++	ret = proto_cb_get_part_info(mmc_dev, "recovery", &part_info);
++	if (ret < 0) {
++		log_err("Unable to find recovery partition.\n");
++	} else {
++		env_set_ulong("recovery_partnum", ret);
++	}
++
++	ret = proto_cb_get_part_info(mmc_dev, "data", &part_info);
++	if (ret < 0) {
++		log_err("Unable to find data partition.\n");
++	} else {
++		env_set_ulong("data_partnum", ret);
++	}
++
++	if (env_get("devnum") == NULL) {
++		env_set_ulong("devnum", proto_cb_mmc_devnum);
++	}
++
++	env_set_ulong("ustate", 0);
++	env_set_ulong("bootlimit", 5);
++	env_set("altbootcmd", "bootcount reset; dhcp; fastboot udp; reset");
++
++	proto_cb_set_hostname();
++	ret = env_save();
++
++	log_info("Initialized env variables. (%d)\n", ret);
++}
++
+ static void proto_cb_board_init(void) {
+ 	int ret = env_select("MMC");
+-	ret = !ret && env_load();
++	if (!ret) {
++		ret = env_load();
++	}
+ 	if (ret < 0) {
+ 		log_err("Failed to load env (%d)\n", ret);
++		proto_cb_init_env_vars();
+ 	}
++
+ 	proto_cb_board_probe_io_board();
+ 	setup_led(LEDST_ON);
+ }
+diff --git a/disk/part.c b/disk/part.c
+index a6a8f7052bd..109dc11ddcc 100644
+--- a/disk/part.c
++++ b/disk/part.c
+@@ -26,7 +26,7 @@
+ /* Check all partition types */
+ #define PART_TYPE_ALL		-1
+ 
+-static struct part_driver *part_driver_lookup_type(struct blk_desc *dev_desc)
++struct part_driver *part_driver_lookup_type(struct blk_desc *dev_desc)
+ {
+ 	struct part_driver *drv =
+ 		ll_entry_start(struct part_driver, part_driver);
+diff --git a/include/part.h b/include/part.h
+index 419c8597088..abcf101c243 100644
+--- a/include/part.h
++++ b/include/part.h
+@@ -525,4 +525,6 @@ static inline struct part_driver *part_driver_get_first(void)
+ { return NULL; }
+ #endif /* CONFIG_PARTITIONS */
+ 
++struct part_driver *part_driver_lookup_type(struct blk_desc *dev_desc);
++
+ #endif /* _PART_H */
+-- 
+2.53.0
+

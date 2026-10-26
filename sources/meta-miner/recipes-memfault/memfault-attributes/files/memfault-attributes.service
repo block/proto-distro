@@ -1,0 +1,10 @@
+[Unit]
+After=memfaultd.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh "/usr/bin/memfault-attributes.sh"
+RemainAfterExit=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,16 @@
+#!/bin/sh
+sanitize() {
+    echo "$1" | sed 's/[^a-zA-Z0-9._:+-]//g'
+}
+
+readonly SOFTWARE_PKG_TYPE="proto-distro-image"
+
+MACHINE=$(grep '^MACHINE=' /etc/os-release | cut -d '=' -f 2)
+MFG_SERIAL_NUMBER=$(grep '^MFG_SERIAL_NUMBER=' /etc/machine-info | cut -d '=' -f 2)
+VARIANT=$(grep '^VARIANT=' /etc/os-release | cut -d '=' -f 2)
+VERSION=$(grep '^VERSION=' /etc/os-release | cut -d '=' -f 2)
+
+echo MEMFAULT_HARDWARE_VERSION=$(sanitize "${MACHINE}")
+echo MEMFAULT_DEVICE_ID=$(sanitize "${MFG_SERIAL_NUMBER}")
+echo MEMFAULT_SOFTWARE_VERSION=$(sanitize "${VERSION}-${VARIANT}")
+echo MEMFAULT_SOFTWARE_TYPE=$(sanitize "${SOFTWARE_PKG_TYPE}")

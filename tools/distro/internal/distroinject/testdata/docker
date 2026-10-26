@@ -1,0 +1,72 @@
+#!/bin/sh
+# Model container mutation/signing only; archive, manifest and checksum code stays real.
+set -eu
+if [ "${DISTRO_TEST_NO_DOCKER:-}" = 1 ]; then
+    echo 'unexpected Docker work' >&2
+    exit 90
+fi
+case "$1" in
+    version|image) exit 0 ;;
+    run) shift ;;
+    *) echo "unexpected Docker command: $1" >&2; exit 91 ;;
+esac
+signer= image= images= private= packages= version=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --entrypoint) signer=$2; shift ;;
+        --mount)
+            shift
+            source=${1#type=bind,src=}; source=${source%%,dst=*}
+            case "$1" in
+                *,dst=/images) images=$source ;;
+                *,dst=/keys/private.pem,readonly) private=$source ;;
+            esac ;;
+        --rootfs-image) image=${2#/images/}; shift ;;
+        -v)
+            shift
+            case "$1" in
+                *:/work/image.ext4) image=${1%:/work/image.ext4} ;;
+                *:/work/packages) packages=${1%:/work/packages} ;;
+            esac ;;
+        -e)
+            shift
+            case "$1" in OS_RELEASE_VERSION=*) version=${1#OS_RELEASE_VERSION=} ;; esac ;;
+    esac
+    shift
+done
+if [ "$signer" = create_avb_image ]; then
+    [ "${DISTRO_TEST_SIGNER_FAIL:-}" != 1 ] || exit 42
+    if [ "${DISTRO_TEST_FULL_ONLY:-}" = 1 ] || [ "${DISTRO_TEST_DUAL_OUTPUT:-}" = 1 ]; then
+        cp "$images/$image" "$images/$image.avb"
+    fi
+    if [ "${DISTRO_TEST_COMPACT_ONLY:-}" = 1 ] || [ "${DISTRO_TEST_DUAL_OUTPUT:-}" = 1 ]; then
+        printf compact > "$images/$image.avb.footer"
+    fi
+    if [ "${DISTRO_TEST_FULL_ONLY:-}" != 1 ] && [ "${DISTRO_TEST_COMPACT_ONLY:-}" != 1 ]; then
+        for part in BODY TAIL; do
+            eval "missing=\${DISTRO_TEST_NO_$part:-}"
+            [ "$missing" != 1 ] || continue
+            eval "kind=\${DISTRO_TEST_${part}_KIND:-}"
+            eval "source=\${DISTRO_TEST_$part}"
+            case "$part" in BODY) output="$images/$image.avb.body"; size=1073741824 ;; TAIL) output="$images/$image.avb.tail"; size=1024 ;; esac
+            case "$kind" in
+                empty) : > "$output" ;;
+                directory) mkdir "$output" ;;
+                symlink) ln -s "$source" "$output" ;;
+                unaligned) printf x > "$output" ;;
+                oversized) dd if=/dev/zero of="$output" bs=1 count=0 seek="$size" 2>/dev/null ;;
+                *) cp "$source" "$output" ;;
+            esac
+        done
+    fi
+else
+    [ -n "$image" ]
+    for package in "$packages"/*.ipk; do
+        [ -f "$package" ] || continue
+        cat "$package" >> "$image"
+    done
+    [ -z "$version" ] || printf 'VERSION=%s\n' "$version" >> "$image"
+    size=$(wc -c < "$image")
+    padding=$(( (512 - size % 512) % 512 ))
+    dd if=/dev/zero bs=1 count="$padding" >> "$image" 2>/dev/null
+fi

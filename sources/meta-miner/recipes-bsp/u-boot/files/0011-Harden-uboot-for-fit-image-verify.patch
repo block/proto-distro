@@ -1,0 +1,138 @@
+From ffc1515ee6982171fb7eae3acd3235f4f5a34eb1 Mon Sep 17 00:00:00 2001
+From: BTCM SW Team <btcm-sw-team@squareup.com>
+Date: Tue, 24 Jun 2025 15:12:57 -0400
+Subject: [PATCH] Harden uboot for fit image verify
+
+%% original patch: 0001-Harden-uboot-for-fit-image-verify.patch
+
+%% original patch: 0011-Harden-uboot-for-fit-image-verify.patch
+
+---
+ board/st/stm32mp1/stm32mp1.c       | 57 +++++++++++++++++++++++++++++-
+ env/flags.c                        |  2 +-
+ include/configs/stm32mp13_common.h |  3 ++
+ 3 files changed, 60 insertions(+), 2 deletions(-)
+
+diff --git a/board/st/stm32mp1/stm32mp1.c b/board/st/stm32mp1/stm32mp1.c
+index 7c356b32ab4..cfca91b6f8a 100644
+--- a/board/st/stm32mp1/stm32mp1.c
++++ b/board/st/stm32mp1/stm32mp1.c
+@@ -55,6 +55,7 @@
+ #include <mmc.h>
+ #include <part.h>
+ #include <blk.h>
++#include <fuse.h>
+ #include <stdio.h>
+ 
+ /* SYSCFG registers */
+@@ -99,6 +100,14 @@ DECLARE_GLOBAL_DATA_PTR;
+ #define USB_START_HIGH_THRESHOLD_UV	2150000
+ 
+ #define PROTO_CB_DEFAULT_DEVNUM 1
++#define PROTO_CB_FUSE_BANK 0
++#define PROTO_CB_FUSE_MAC_SUFFIX_REG_WORD_IDX 58
++
++#define PROTO_CB_DEVICE_LOCK_OTP_INDEX 0
++#define PROTO_CB_DEVICE_LOCK_OTP_MASK ((1 << 5) | (1 << 3))
++
++#define PROTO_CB_FUSE_UNLOCK_REG_WORD_IDX 65
++#define PROTO_CB_USER_UNLOCK_VALUE        0x5a5a5a5a
+ 
+ static int proto_cb_mmc_devnum = -1;
+ 
+@@ -808,11 +817,35 @@ static int proto_cb_get_part_info(struct blk_desc *mmc_dev, const char *name, st
+ 	}
+ 	return -ENOENT;
+ }
++static bool proto_cb_device_locked(void){
++	uint32_t lock_reg = 0;
++	int ret = fuse_read(PROTO_CB_FUSE_BANK, PROTO_CB_DEVICE_LOCK_OTP_INDEX, &lock_reg);
++	if (ret) {
++		log_err("Failed to read device lock reg!");
++		return true;
++	}
++
++	// If lock OTP is not set, device is not locked
++	if ((lock_reg & PROTO_CB_DEVICE_LOCK_OTP_MASK) == 0) {
++		return false;
++	}
++
++	// Lock OTP is set, check if user has unlocked
++	uint32_t unlock_reg = 0;
++	ret = fuse_read(PROTO_CB_FUSE_BANK, PROTO_CB_FUSE_UNLOCK_REG_WORD_IDX, &unlock_reg);
++	if (ret) {
++		log_err("Failed to read device unlock reg!");
++		return true;
++	}
++
++	// Device is locked if unlock register is not set
++	return unlock_reg == 0;
++}
+ 
+ static void proto_cb_set_hostname(void){
+ 	char hostname[32];
+ 	unsigned char mac_bytes[4] = {0};
+-	int ret = fuse_read(0, 58, mac_bytes);
++	int ret = fuse_read(PROTO_CB_FUSE_BANK, PROTO_CB_FUSE_MAC_SUFFIX_REG_WORD_IDX, mac_bytes);
+ 	if (ret) {
+ 		log_err("Failed to read the MAC ID!");
+ 	}
+@@ -913,6 +946,28 @@ static void board_proto_cb_late_init(void)
+ 		env_set("kernel_boot_conf", "");
+ 	}
+ 	// Don't bother saving the env variable since it will be updated everytime and used immediately
++
++	// If verify does not match the device state, update it
++	// Since fw env is just stored in flash, it is possible to just overwrite the verify
++	// field in the flash and boot into uboot. Therefore verify flag needs to be checked
++	// every time upon boot and updated if it does not match user unlock register status.
++	// This assumes that attacker can't not modify verify flag during the middle of uboot
++	// running. Setenv for "verify" via boot script and cli have been disabled, it is only
++	// possible to updated "verify" programmatically within uboot code. And since uboot binary
++	// will be signed and verified during boot, therefore "verify" can't be disabled by attacker
++	// unless user unlocks the device.
++	//
++	// unlocked + current verifying => stop verifying
++	// locked + not verifying => start verifying
++	// locked + current verifying => Do nothing
++	// unlocked + not verifying => Do nothing
++	bool locked = proto_cb_device_locked();
++	if ((env_get_yesno("verify") == -1) || (locked != env_get_yesno("verify"))) {
++		env_set("verify", locked ? "y" : "n");
++		printf("Updating verify flag to %s\n", env_get("verify"));
++		env_save();
++	}
++
+ }
+ 
+ static bool board_is_proto_cb(void)
+diff --git a/env/flags.c b/env/flags.c
+index e3e833c4333..8846cf2f220 100644
+--- a/env/flags.c
++++ b/env/flags.c
+@@ -578,7 +578,7 @@ int env_flags_validate(const struct env_entry *item, const char *newval,
+ 		}
+ 		break;
+ 	case env_op_overwrite:
+-		if (item->flags & ENV_FLAGS_VARACCESS_PREVENT_OVERWR) {
++		if (!(flag & H_PROGRAMMATIC) && (item->flags & ENV_FLAGS_VARACCESS_PREVENT_OVERWR)) {
+ 			printf("## Error: Can't overwrite \"%s\"\n", name);
+ 			return 1;
+ 		} else if (item->flags &
+diff --git a/include/configs/stm32mp13_common.h b/include/configs/stm32mp13_common.h
+index 1fbd4fface2..54ad1a2e73f 100644
+--- a/include/configs/stm32mp13_common.h
++++ b/include/configs/stm32mp13_common.h
+@@ -92,6 +92,9 @@
+ 	BOOT_TARGET_USB(func)		\
+ 	BOOT_TARGET_PXE(func)
+ 
++#define CONFIG_ENV_FLAGS_LIST_STATIC \
++	"bootcmd:so,bootcmd_stm32mp:so,distro_bootcmd:so,bootcmd_mmc1:so,mmc_boot:so,scan_dev_for_boot_part:so,verify:bo,"
++
+ /*
+  * default bootcmd for stm32mp13:
+  * for serial/usb: execute the stm32prog command
+-- 
+2.43.0
+
