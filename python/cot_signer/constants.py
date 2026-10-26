@@ -1,0 +1,173 @@
+"""Constants used by COT signer"""
+
+from enum import Enum
+from typing import List
+
+# ECC curve OIDs: https://oid-base.com/get/
+EC_PUBLIC_KEY_OID = "1.2.840.10045.2.1"  # id-ecPublicKey
+PRIME256V1_CURVE_OID = "1.2.840.10045.3.1.7"  # secp256r1/prime256v1
+
+
+class HelperEnum(Enum):
+
+    @classmethod
+    def members(cls) -> List[str]:
+        return [m.name for m in cls]
+
+
+class Product(HelperEnum):
+    C2 = 0
+    C3 = 1
+
+
+TRUSTED_NV_COUNTER = {
+    Product.C2: 0,
+    Product.C3: 2,
+}
+NON_TRUSTED_NV_COUNTER = {
+    Product.C2: 0,
+    Product.C3: 2,
+}
+
+
+class SecurityWorld(HelperEnum):
+    NON_TRUSTED = 0
+    TRUSTED = 1
+
+
+class ExtensionType(HelperEnum):
+    NV_COUNTER = 1
+    PUBLIC_KEY = 2
+    HASH = 3
+
+
+class SigningProvider(HelperEnum):
+    HASHICORP_VAULT = 1
+    AWS_KMS = 2
+
+
+class Environment(HelperEnum):
+    PROD = 1
+    STAGING = 2
+    LOCAL = 3
+
+
+# https://github.com/ARM-software/arm-trusted-firmware/blob/master/include/tools_share/tbbr_oid.h
+TRUSTED_NVCOUNTER_OID = "1.3.6.1.4.1.4128.2100.1"
+NON_TRUSTED_NVCOUNTER_OID = "1.3.6.1.4.1.4128.2100.2"
+TRUSTED_OS_FW_CONTENT_CERT_PK_OID = "1.3.6.1.4.1.4128.2100.901"
+NON_TRUSTED_FW_CONTENT_CERT_PK_OID = "1.3.6.1.4.1.4128.2100.1101"
+TRUSTED_WORLD_PK_OID = "1.3.6.1.4.1.4128.2100.302"
+NON_TRUSTED_WORLD_PK_OID = "1.3.6.1.4.1.4128.2100.303"
+TRUSTED_OS_FW_HASH_OID = "1.3.6.1.4.1.4128.2100.1001"
+TRUSTED_OS_FW_EXTRA1_HASH_OID = "1.3.6.1.4.1.4128.2100.1002"
+TRUSTED_OS_FW_EXTRA2_HASH_OID = "1.3.6.1.4.1.4128.2100.1003"
+TRUSTED_OS_FW_CONFIG_HASH_OID = "1.3.6.1.4.1.4128.2100.1004"
+TRUSTED_BOOT_FW_HASH_OID = "1.3.6.1.4.1.4128.2100.201"
+TRUSTED_BOOT_FW_CONFIG_HASH_OID = "1.3.6.1.4.1.4128.2100.202"
+HW_CONFIG_HASH_OID = "1.3.6.1.4.1.4128.2100.203"
+FW_CONFIG_HASH_OID = "1.3.6.1.4.1.4128.2100.204"
+NON_TRUSTED_WORLD_BOOTLOADER_HASH_OID = "1.3.6.1.4.1.4128.2100.1201"
+NON_TRUSTED_FW_CONFIG_HASH_OID = "1.3.6.1.4.1.4128.2100.1202"
+
+OID_TO_EXTENSION_TYPE = {
+    TRUSTED_NVCOUNTER_OID: ExtensionType.NV_COUNTER,
+    NON_TRUSTED_NVCOUNTER_OID: ExtensionType.NV_COUNTER,
+    TRUSTED_OS_FW_CONTENT_CERT_PK_OID: ExtensionType.PUBLIC_KEY,
+    NON_TRUSTED_FW_CONTENT_CERT_PK_OID: ExtensionType.PUBLIC_KEY,
+    TRUSTED_WORLD_PK_OID: ExtensionType.PUBLIC_KEY,
+    NON_TRUSTED_WORLD_PK_OID: ExtensionType.PUBLIC_KEY,
+    TRUSTED_OS_FW_HASH_OID: ExtensionType.HASH,
+    TRUSTED_OS_FW_EXTRA1_HASH_OID: ExtensionType.HASH,
+    TRUSTED_OS_FW_EXTRA2_HASH_OID: ExtensionType.HASH,
+    TRUSTED_OS_FW_CONFIG_HASH_OID: ExtensionType.HASH,
+    TRUSTED_BOOT_FW_HASH_OID: ExtensionType.HASH,
+    TRUSTED_BOOT_FW_CONFIG_HASH_OID: ExtensionType.HASH,
+    HW_CONFIG_HASH_OID: ExtensionType.HASH,
+    FW_CONFIG_HASH_OID: ExtensionType.HASH,
+    NON_TRUSTED_WORLD_BOOTLOADER_HASH_OID: ExtensionType.HASH,
+    NON_TRUSTED_FW_CONFIG_HASH_OID: ExtensionType.HASH,
+}
+
+OID_TO_STRING = {
+    TRUSTED_NVCOUNTER_OID: "Trusted NV Counter",
+    NON_TRUSTED_NVCOUNTER_OID: "Non Trusted NV Counter",
+    TRUSTED_OS_FW_CONTENT_CERT_PK_OID: "Trusted OS Firmware Content Certificate Public Key",
+    NON_TRUSTED_FW_CONTENT_CERT_PK_OID: "Non Trusted OS Firmware Content Certificate Public Key",
+    TRUSTED_WORLD_PK_OID: "Trusted World Public Key",
+    NON_TRUSTED_WORLD_PK_OID: "Non Trusted World Public Key",
+    TRUSTED_OS_FW_HASH_OID: "Trusted OS Firmware Hash",
+    TRUSTED_OS_FW_EXTRA1_HASH_OID: "Trusted OS Firmware Extra1 Hash",
+    TRUSTED_OS_FW_EXTRA2_HASH_OID: "Trusted OS Firmware Extra2 Hash",
+    TRUSTED_OS_FW_CONFIG_HASH_OID: "Trusted OS Firmware Config Hash",
+    TRUSTED_BOOT_FW_HASH_OID: "Trusted Boot Firmware Hash",
+    TRUSTED_BOOT_FW_CONFIG_HASH_OID: "Trusted Boot Firmware Config Hash",
+    HW_CONFIG_HASH_OID: "HW Config Hash",
+    FW_CONFIG_HASH_OID: "Firmware Config Hash",
+    NON_TRUSTED_WORLD_BOOTLOADER_HASH_OID: "Non Trusted World Bootloader Hash",
+    NON_TRUSTED_FW_CONFIG_HASH_OID: "Non Trusted Firmware Config Hash",
+}
+
+# Cert names to extension type and oid
+STM32MP_CFG_CERT_NAME = "stm32mp_cfg_cert.crt"
+STM32MP_CFG_CERT_OIDS = {
+    TRUSTED_NVCOUNTER_OID,
+    HW_CONFIG_HASH_OID,
+    FW_CONFIG_HASH_OID,
+}
+
+NT_FW_CONTENT_CERT_NAME = "nt_fw_content.crt"
+NT_FW_CONTENT_CERT_OIDS = {
+    NON_TRUSTED_NVCOUNTER_OID,
+    NON_TRUSTED_WORLD_BOOTLOADER_HASH_OID,
+    NON_TRUSTED_FW_CONFIG_HASH_OID,
+}
+
+TOS_FW_KEY_CERT_NAME = "tos_fw_key.crt"
+TOS_FW_KEY_CERT_OIDS = {
+    TRUSTED_NVCOUNTER_OID,
+    TRUSTED_OS_FW_CONTENT_CERT_PK_OID,
+}
+
+TB_FW_CERT_NAME = "tb_fw.crt"
+TB_FW_CERT_OIDS = {
+    TRUSTED_NVCOUNTER_OID,
+    TRUSTED_BOOT_FW_HASH_OID,
+    TRUSTED_BOOT_FW_CONFIG_HASH_OID,
+    HW_CONFIG_HASH_OID,
+    FW_CONFIG_HASH_OID,
+}
+
+NT_FW_KEY_CERT_NAME = "nt_fw_key.crt"
+NT_FW_KEY_CERT_OIDS = {
+    NON_TRUSTED_NVCOUNTER_OID,
+    NON_TRUSTED_FW_CONTENT_CERT_PK_OID,
+}
+
+TOS_FW_CONTENT_CERT_NAME = "tos_fw_content.crt"
+TOS_FW_CONTENT_CERT_OIDS = {
+    TRUSTED_NVCOUNTER_OID,
+    TRUSTED_OS_FW_HASH_OID,
+    TRUSTED_OS_FW_EXTRA1_HASH_OID,
+    TRUSTED_OS_FW_EXTRA2_HASH_OID,
+    TRUSTED_OS_FW_CONFIG_HASH_OID,
+}
+
+TRUSTED_KEY_CERT_NAME = "trusted_key.crt"
+TRUSTED_KEY_CERT_OIDS = {
+    TRUSTED_NVCOUNTER_OID,
+    TRUSTED_WORLD_PK_OID,
+    NON_TRUSTED_WORLD_PK_OID,
+}
+
+CERT_MAPPING = {
+    STM32MP_CFG_CERT_NAME: STM32MP_CFG_CERT_OIDS,
+    NT_FW_CONTENT_CERT_NAME: NT_FW_CONTENT_CERT_OIDS,
+    TOS_FW_KEY_CERT_NAME: TOS_FW_KEY_CERT_OIDS,
+    TB_FW_CERT_NAME: TB_FW_CERT_OIDS,
+    NT_FW_KEY_CERT_NAME: NT_FW_KEY_CERT_OIDS,
+    TOS_FW_CONTENT_CERT_NAME: TOS_FW_CONTENT_CERT_OIDS,
+    TRUSTED_KEY_CERT_NAME: TRUSTED_KEY_CERT_OIDS,
+}
+
+EMPTY_FILE_SHA256 = bytes.fromhex("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")

@@ -1,0 +1,45 @@
+defaults:
+  machine: c3-p1
+  distro: proto
+  variant: release
+  env_file: .env
+docker:
+  builder:
+    image: ghcr.io/block/proto-distro-builder:latest
+    hostname: distro-builder
+    container_distro_dir: /home/btcm/proto-distro
+    shell_init: "source sources/poky/oe-init-build-env build && exec bash"
+    build_volume: proto-distro-build
+    build_dir: build
+    env_passthrough:
+      - MEMFAULT_PROJECT_KEY
+  injector:
+    image: ghcr.io/block/proto-distro-injector:latest
+signing:
+  key_dir: sources/meta-miner/recipes-dev/miner-signing-keys/files/swupdate_dev_keys
+avb:
+  c3-p1:
+    private_key: sources/meta-miner/recipes-dev/miner-signing-keys/files/dev/keys/dev/c3/intermediate/c3-dm-verity-rootfs-signing-key-dev.priv.pem
+    public_key: sources/meta-miner/recipes-dev/miner-signing-keys/files/dev/keys/dev/c3/intermediate/c3-dm-verity-rootfs-signing-key-dev.pub.pem
+    avb_public_key: sources/meta-miner/recipes-dev/miner-signing-keys/files/dev/keys/dev/c3/intermediate/c3-dm-verity-rootfs-signing-key-dev.avbpubkey
+version:
+  tag_prefix: "v"
+artifacts:
+  images_base_path: build/tmp-glibc/deploy/images/{machine}/
+  files:
+    - arm-trusted-firmware/
+    - fip/
+    - optee/
+    - "{target}-{machine}-{version}.rootfs.ext4"
+    - "miner-bootfs-{distro}-{machine}-{version}.bootfs.ext4"
+    - "miner-datafs-{distro}-{machine}-{version}.datafs.ext4"
+    - "{target}-{machine}-{version}.swu"
+    - "{target}-{machine}-{version}-with-fip.swu"
+    - "{target}-{machine}.manifest"
+  local_files:
+    - dist/proto-swupdate/release/proto-swupdate_linux_arm_7/proto-swupdate
+build_stats:
+  paths:
+    - "artifacts/miner-image-latest/{target}-{machine}-{version}.rootfs.ext4"
+    - "artifacts/miner-image-latest/{target}-{machine}-{version}.swu"
+    - "artifacts/miner-image-latest/{target}-{machine}-{version}-with-fip.swu"

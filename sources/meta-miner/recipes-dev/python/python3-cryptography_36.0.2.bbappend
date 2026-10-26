@@ -1,0 +1,1 @@
+BB_STRICT_CHECKSUM = "0"

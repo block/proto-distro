@@ -1,0 +1,65 @@
+From 8b45bce956dd1a02540d7ee5e2035a2e2dff8959 Mon Sep 17 00:00:00 2001
+From: James Zhao <hjz@block.xyz>
+Date: Wed, 25 Jun 2025 21:49:28 -0400
+Subject: [PATCH] Add st,non-secure-otp-post-provision property to otp reg
+
+---
+ core/drivers/stm32_bsec.c                     | 22 +++++++++++++++++++
+ .../bindings/nvmem/st,stm32-romem.yaml        |  8 +++++++
+ 2 files changed, 30 insertions(+)
+
+diff --git a/core/drivers/stm32_bsec.c b/core/drivers/stm32_bsec.c
+index 6190c3290..5795bb74d 100644
+--- a/core/drivers/stm32_bsec.c
++++ b/core/drivers/stm32_bsec.c
+@@ -794,6 +794,28 @@ static void bsec_dt_otp_nsec_access(void *fdt, int bsec_node)
+ 				DMSG("BSEC: OTP locked");
+ 				continue;
+ 			}
++		} else if (fdt_getprop(fdt, bsec_subnode, "st,non-secure-otp-post-provision",
++				   NULL)) {
++			bool locked, locked_next = false;
++			/* Check if write of OTP is locked */
++			if (stm32_bsec_read_permanent_lock(otp_id, &locked))
++				panic("BSEC: Couldn't read permanent lock at init");
++
++			for (j = 1; j < (length / sizeof(uint32_t)); j++) {
++				stm32_bsec_read_permanent_lock(otp_id + j,
++							       &locked_next);
++				if (locked != locked_next) {
++					EMSG("Inconsistent status OTP id %u",
++					     otp_id + j);
++					locked = true;
++					continue;
++				}
++			}
++
++			if (!locked) {
++				DMSG("BSEC: OTP unlocked");
++				continue;
++			}
+ 
+ 		} else if (!fdt_getprop(fdt, bsec_subnode, "st,non-secure-otp",
+ 				   NULL)) {
+diff --git a/documentation/devicetree/bindings/nvmem/st,stm32-romem.yaml b/documentation/devicetree/bindings/nvmem/st,stm32-romem.yaml
+index 1b8819fe6..c62340112 100644
+--- a/documentation/devicetree/bindings/nvmem/st,stm32-romem.yaml
++++ b/documentation/devicetree/bindings/nvmem/st,stm32-romem.yaml
+@@ -51,6 +51,14 @@ patternProperties:
+           the specified area is done, access from non-secure is forbidden.
+           It is needed when, by default, the related area is empty and must be provisioned.
+         type: boolean
++      st,non-secure-otp-post-provision:
++        description: |
++          This property explicit a field programmed area that allows a non-secure
++          read only after the first programmed value. Once the provisioned of
++          the specified area is done, access from non-secure is allowed.
++          Before only secure is allowed to write to it.
++          It is needed when, by default, the related area is empty and must be provisioned.
++        type: boolean
+ 
+ required:
+   - "#address-cells"
+-- 
+2.49.0
+

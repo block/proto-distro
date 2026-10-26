@@ -1,0 +1,14 @@
+[Unit]
+Wants=tee-supplicant.service ota-boot.service
+After=local-fs.target tee-supplicant.service miner-hostname.service miner-firstboot.service ota-boot.service
+Before=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh "/usr/bin/boot.sh"
+ExecStartPost=-@BASE_BINDIR@/systemctl start miner-boot-security.service
+ExecStartPost=-/bin/sh -c '@BASE_BINDIR@/systemctl is-active --quiet application-boot.target || @BASE_BINDIR@/systemctl start application-boot.target'
+RemainAfterExit=true
+
+[Install]
+WantedBy=multi-user.target

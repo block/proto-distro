@@ -1,0 +1,16 @@
+[Unit]
+Description=Nats Server Service
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/nats-server -c /etc/nats/nats-%i.conf
+Restart=always
+RestartSec=3
+MemoryHigh=96M
+MemoryMax=128M
+OOMPolicy=stop
+# systemd sandboxing: make /usr, /boot, and /etc read-only for this service.
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

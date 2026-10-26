@@ -1,0 +1,273 @@
+#!/bin/sh
+# Inspect the mounted root's live dm-verity mapping without changing it.
+
+usage() {
+	cat <<'USAGE'
+Usage: dm-verity-status [-h|--help]
+
+Run locally on the machine to inspect: sudo ./dm-verity-status
+Requires Linux, root privileges, findmnt, dmsetup, and standard shell utilities.
+Does not invoke sudo, modify mappings, or scan the root device.
+Reports the boot partition when the mapping has one direct backing partition.
+
+Exit codes:
+  0  YES: healthy, enforcing dm-verity; no corruption detected so far
+  1  NO: mounted root is a non-device-mapper block device
+  2  UNKNOWN: unsupported mapping, missing prerequisites, or inspection error
+  3  YES: verity target exists, but corruption or unhealthy configuration found
+
+V covers checks performed so far; this is not a full-disk scan or proof of
+locked secure boot. Writable overlays are outside this check.
+USAGE
+}
+
+unknown() {
+	printf 'UNKNOWN: %s\n' "$1"
+	exit 2
+}
+
+single_line() {
+	case "$1" in
+	'' | *'
+'*) unknown "empty or multiline $2" ;;
+	esac
+}
+
+is_uint() {
+	case "$1" in
+	'' | *[!0-9]*) return 1 ;;
+	esac
+}
+
+is_positive() {
+	is_uint "$1" || return 1
+	case "$1" in
+	*[1-9]*) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+read_text() {
+	text=$(cat "$1") || unknown "cannot read $1"
+	single_line "$text" "$1"
+}
+
+root_info() {
+	mount_info=$(findmnt -rn -o SOURCE,MAJ:MIN,FSTYPE,OPTIONS /) ||
+		unknown 'findmnt failed for mounted root'
+	single_line "$mount_info" 'mounted-root report'
+	# The four columns are SOURCE, MAJ:MIN, FSTYPE, OPTIONS from findmnt above.
+	# Raw findmnt output escapes embedded whitespace; never expand glob tokens.
+	set -- $mount_info
+	[ "$#" -eq 4 ] || unknown 'malformed mounted-root report'
+	root_source=$1
+	root_device=$2
+	root_fstype=$3
+	root_options=$4
+	case "$root_device" in
+	*:*) major=${root_device%:*}; minor=${root_device#*:} ;;
+	*) unknown 'invalid root major:minor' ;;
+	esac
+	is_uint "$major" && is_uint "$minor" || unknown 'invalid root major:minor'
+	root_sysfs=$sysfs/$root_device
+	[ -d "$root_sysfs" ] || unknown "no sysfs block device for root $root_device"
+	if [ ! -d "$root_sysfs/dm" ]; then
+		printf 'NO: mounted root is not using dm-verity\nRoot: %s (%s), %s, %s\n' \
+			"$root_source" "$root_device" "$root_fstype" "$root_options"
+		exit 1
+	fi
+
+	read_text "$root_sysfs/dm/name"
+	mapper_name=$text
+	read_text "$root_sysfs/ro"
+	root_ro=$text
+	read_text "$root_sysfs/dm/suspended"
+	root_suspended=$text
+	case "$root_ro:$root_suspended" in
+	[01]:[01]) ;;
+	*) unknown 'invalid sysfs read-only/suspended state' ;;
+	esac
+	read_text "$root_sysfs/size"
+	root_size=$text
+	is_positive "$root_size" || unknown 'invalid root sector count'
+	[ -d "$root_sysfs/slaves" ] && [ -r "$root_sysfs/slaves" ] ||
+		unknown 'cannot read root backing devices'
+	backing=$(
+		# Globbing is deliberate here only, isolated from report parsing.
+		set +f
+		separator=
+		for slave in "$root_sysfs"/slaves/*; do
+			[ -e "$slave" ] || continue
+			printf '%s%s' "$separator" "${slave##*/}"
+			separator=' '
+		done
+	)
+	boot_partition=unknown
+	set -- $backing
+	if [ "$#" -eq 1 ] && [ -f "$root_sysfs/slaves/$1/partition" ]; then
+		read_text "$root_sysfs/slaves/$1/partition"
+		is_positive "$text" || unknown 'invalid backing partition number'
+		boot_partition="/dev/$1 (partition $text)"
+	fi
+}
+
+mapper_info() {
+	dmsetup info -c --noheadings --separator : \
+		-o major,minor,attr,segments,events --major "$major" --minor "$minor"
+}
+
+check_mapping() {
+	info_before=$1
+	table=$2
+	status=$3
+	info_after=$4
+	single_line "$info_before" 'initial mapper info'
+	single_line "$info_after" 'final mapper info'
+	# Columnar reports can have outer padding, even with --noheadings.
+	set -- $info_before
+	[ "$#" -eq 1 ] || unknown 'malformed initial mapper info'
+	info_before=$1
+	set -- $info_after
+	[ "$#" -eq 1 ] || unknown 'malformed final mapper info'
+	info_after=$1
+	[ "$info_before" = "$info_after" ] || unknown 'mapper changed during inspection'
+	saved_ifs=$IFS
+	IFS=:
+	set -- $info_before
+	IFS=$saved_ifs
+	# dmsetup info requested five fields: major, minor, attr, segments, events.
+	[ "$#" -eq 5 ] || unknown 'malformed mapper info fields'
+	[ "$1:$2" = "$root_device" ] || unknown 'mapper identity does not match root'
+	attributes=$3
+	case "$attributes" in
+	[L-][I-][s-][rw]) ;;
+	*) unknown 'unsupported mapper attributes' ;;
+	esac
+	is_uint "$4" && is_uint "$5" || unknown 'invalid mapper segment/event counts'
+	[ "$4" = 1 ] || unknown 'unsupported root mapping: expected one segment'
+
+	single_line "$status" 'mapper status'
+	set -- $status
+	[ "$#" -ge 3 ] || unknown 'truncated mapper status'
+	[ "$3" = verity ] || unknown 'unsupported root mapping: target is not verity'
+	# The kernel verity status ABI is: start-sector length-sectors verity V|C.
+	[ "$#" -eq 4 ] || unknown 'malformed verity status'
+	[ "$1" = 0 ] && [ "$2" = "$root_size" ] ||
+		unknown 'verity status does not cover the whole root device'
+	verity_status=$4
+	case "$verity_status" in
+	V | C) ;;
+	*) unknown 'unsupported verity status' ;;
+	esac
+
+	single_line "$table" 'mapper table'
+	set -- $table
+	[ "$#" -ge 3 ] || unknown 'truncated mapper table'
+	[ "$3" = verity ] || unknown 'unsupported root mapping: table is not verity'
+	# Three dmsetup columns (start, length, target) precede ten required verity arguments.
+	[ "$#" -ge 13 ] || unknown 'truncated verity table'
+	[ "$1" = 0 ] && [ "$2" = "$root_size" ] ||
+		unknown 'verity table does not cover the whole root device'
+	# The kernel dm-verity ABI defines on-disk hash formats 0 (legacy) and 1.
+	case "$4" in
+	0 | 1) ;;
+	*) unknown 'unsupported verity table version' ;;
+	esac
+	is_positive "$7" && is_positive "$8" && is_positive "$9" && is_uint "${10}" ||
+		unknown 'invalid verity block sizes/counts'
+	# Mandatory fields are nonempty tokens; never print the digest or salt.
+	shift 13
+	verity_options=none
+	ignore_corruption=0
+	if [ "$#" -gt 0 ]; then
+		option_count=$1
+		is_uint "$option_count" || unknown 'invalid verity optional-word count'
+		shift
+		[ "$option_count" = "$#" ] || unknown 'verity optional-word count mismatch'
+		if [ "$#" -gt 0 ]; then
+			verity_options=$*
+		fi
+		for option in "$@"; do
+			[ "$option" != ignore_corruption ] || ignore_corruption=1
+		done
+	fi
+
+	reasons=
+	case "$attributes" in
+	L???) ;;
+	*) reasons='no live table; ' ;;
+	esac
+	case "$attributes:$root_ro" in
+	???r:1) ;;
+	*) reasons="${reasons}mapper is not read-only; " ;;
+	esac
+	case "$attributes:$root_suspended" in
+	??-?:0) ;;
+	*) reasons="${reasons}mapper is suspended; " ;;
+	esac
+	if [ "$ignore_corruption" = 1 ]; then
+		reasons="${reasons}ignore_corruption disables enforcement; "
+	fi
+	result=0
+	if [ "$verity_status" = C ]; then
+		printf 'YES: dm-verity is active, but corruption has been detected\n'
+		result=3
+	elif [ -n "$reasons" ]; then
+		printf 'YES: dm-verity target exists, but root verification is not healthy/enforcing\n'
+		result=3
+	else
+		printf 'YES: root filesystem uses dm-verity; status V (no corruption detected)\n'
+	fi
+	[ -z "$reasons" ] || printf 'Reasons: %s\n' "${reasons%; }"
+	printf 'Root: %s (%s), %s, %s\nMapper: %s\n' \
+		"$root_source" "$root_device" "$root_fstype" "$root_options" "$mapper_name"
+	printf 'State: read-only=%s, suspended=%s, attributes=%s\n' \
+		"$root_ro" "$root_suspended" "$attributes"
+	printf 'Backing devices: %s\nMapped sectors: %s\nStatus: %s\nOptions: %s\n' \
+		"${backing:-none}" "$root_size" "$verity_status" "$verity_options"
+	printf 'Boot partition: %s\n' "$boot_partition"
+	printf 'V covers checks performed so far; this is not a full-disk scan or proof of locked secure boot.\n'
+	return "$result"
+}
+
+main() {
+	PATH=/usr/sbin:/usr/bin:/sbin:/bin
+	export PATH
+	if [ "$#" -gt 0 ]; then
+		if [ "$#" -eq 1 ]; then
+			case "$1" in
+			-h | --help) usage; return ;;
+			esac
+		fi
+		usage >&2
+		return 2
+	fi
+
+	LC_ALL=C
+	export LC_ALL
+	IFS=' 	
+'
+	set -f
+	os=$(uname -s) || unknown 'cannot determine operating system'
+	[ "$os" = Linux ] || unknown 'requires Linux'
+	uid=$(id -u) || unknown 'cannot determine effective user ID'
+	[ "$uid" = 0 ] || unknown 'root privileges required; run with sudo'
+	command -v findmnt >/dev/null 2>&1 || unknown 'findmnt is required'
+	command -v dmsetup >/dev/null 2>&1 || unknown 'dmsetup is required'
+
+	sysfs=/sys/dev/block
+	root_info
+	before=$(mapper_info) || unknown 'dmsetup info failed before inspection'
+	table_output=$(dmsetup table --major "$major" --minor "$minor") ||
+		unknown 'dmsetup table failed'
+	status_output=$(dmsetup status --noflush --major "$major" --minor "$minor") ||
+		unknown 'dmsetup status failed'
+	after=$(mapper_info) || unknown 'dmsetup info failed after inspection'
+	read_text "$root_sysfs/ro"
+	[ "$text" = "$root_ro" ] || unknown 'mapper read-only state changed during inspection'
+	read_text "$root_sysfs/dm/suspended"
+	[ "$text" = "$root_suspended" ] || unknown 'mapper suspension changed during inspection'
+	check_mapping "$before" "$table_output" "$status_output" "$after"
+}
+
+main "$@"

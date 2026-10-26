@@ -1,0 +1,26 @@
+From d0b09e66f0969f0a1648507b2658fe034d3c7a37 Mon Sep 17 00:00:00 2001
+From: BTCM SW Team <btcm-sw-team@squareup.com>
+Date: Thu, 22 May 2025 12:19:45 -0400
+Subject: [PATCH 06/17] Remove default eth phy GBit speed support
+
+%% original patch: 0001-update-default-eth-phy-speed.patch
+---
+ drivers/net/phy/phy.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/net/phy/phy.c b/drivers/net/phy/phy.c
+index 69acb694606..3fdb9f1e127 100644
+--- a/drivers/net/phy/phy.c
++++ b/drivers/net/phy/phy.c
+@@ -455,7 +455,7 @@ static struct phy_driver genphy_driver = {
+ 	.uid		= 0xffffffff,
+ 	.mask		= 0xffffffff,
+ 	.name		= "Generic PHY",
+-	.features	= PHY_GBIT_FEATURES | SUPPORTED_MII |
++	.features	= PHY_BASIC_FEATURES | SUPPORTED_MII |
+ 			  SUPPORTED_AUI | SUPPORTED_FIBRE |
+ 			  SUPPORTED_BNC,
+ 	.config		= genphy_config,
+-- 
+2.53.0
+

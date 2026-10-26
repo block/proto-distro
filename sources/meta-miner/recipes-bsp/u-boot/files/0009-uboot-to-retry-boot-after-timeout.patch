@@ -1,0 +1,60 @@
+From 8e4547a5fdbc1ee45845434eb7cb0d68a6465e80 Mon Sep 17 00:00:00 2001
+From: BTCM SW Team <btcm-sw-team@squareup.com>
+Date: Thu, 29 May 2025 14:00:28 -0400
+Subject: [PATCH 09/17] uboot to retry boot after timeout
+
+%% original patch: 0001-Config-uboot-to-retry-boot-after-timeout.patch
+---
+ arch/arm/mach-stm32mp/Kconfig.13x  | 6 +++---
+ configs/stm32mp13_defconfig        | 3 +++
+ include/configs/stm32mp13_common.h | 4 ++++
+ 3 files changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/arch/arm/mach-stm32mp/Kconfig.13x b/arch/arm/mach-stm32mp/Kconfig.13x
+index 5fc000986e1..f8baffd90f6 100644
+--- a/arch/arm/mach-stm32mp/Kconfig.13x
++++ b/arch/arm/mach-stm32mp/Kconfig.13x
+@@ -33,11 +33,11 @@ config BOOTSTAGE_STASH_ADDR
+ 
+ if BOOTCOUNT_GENERIC
+ config SYS_BOOTCOUNT_SINGLEWORD
+-	default y
++	default n
+ 
+-# TAMP_BOOTCOUNT = TAMP_BACKUP_REGISTER(31)
++# End of NS DRAM range
+ config SYS_BOOTCOUNT_ADDR
+-	default 0x5C00A17C
++	default 0xDCFFFFF0
+ endif
+ 
+ if DEBUG_UART
+diff --git a/configs/stm32mp13_defconfig b/configs/stm32mp13_defconfig
+index 0069ab66e7c..750db314afb 100644
+--- a/configs/stm32mp13_defconfig
++++ b/configs/stm32mp13_defconfig
+@@ -146,3 +146,6 @@ CONFIG_BUTTON=y
+ CONFIG_BUTTON_GPIO=y
+ CONFIG_BOARD_TYPES=y
+ CONFIG_LED_COLOR=y
++CONFIG_BOOTCOUNT_LIMIT=y
++CONFIG_BOOTCOUNT_MEM=y
++CONFIG_CMD_BOOTCOUNT=y
+diff --git a/include/configs/stm32mp13_common.h b/include/configs/stm32mp13_common.h
+index 57f3b788b9a..1fbd4fface2 100644
+--- a/include/configs/stm32mp13_common.h
++++ b/include/configs/stm32mp13_common.h
+@@ -43,6 +43,10 @@
+ #define CONFIG_SYS_NAND_ONFI_DETECTION
+ #define CONFIG_SYS_MAX_NAND_DEVICE	1
+ 
++/* Boot retry */
++#define CONFIG_BOOT_RETRY_TIME 120 // 2 mins
++#define CONFIG_RESET_TO_RETRY
++
+ /* Ethernet need */
+ #ifdef CONFIG_DWC_ETH_QOS
+ #define CONFIG_SYS_NONCACHED_MEMORY	(1 * SZ_1M)
+-- 
+2.53.0
+

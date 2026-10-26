@@ -1,0 +1,11 @@
+[Unit]
+Description=Miner Provision Service
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/provision_ta_client server
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

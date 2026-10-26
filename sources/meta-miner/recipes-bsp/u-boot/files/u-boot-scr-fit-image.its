@@ -1,0 +1,38 @@
+/dts-v1/;
+
+/ {
+        description = "U-boot script fitImage for Proto Embedded Linux Distribution";
+        #address-cells = <1>;
+
+        images {
+                default = "boot-script";
+                boot-script {
+                        description = "U-boot script";
+                        data = /incbin/("@@BOOTSCR@@");
+                        type = "script";
+                        compression = "none";
+                        hash-1 {
+                                algo = "sha256";
+                        };
+                };
+        };
+
+        configurations {
+                default = "bootscr";
+                 bootscr {
+                        description = "boot script";
+                        script = "boot-script";
+
+                        hash-1 {
+                                algo = "sha256";
+                        };
+                        signature-1 {
+                                algo = "sha256,rsa2048";
+                                key-name-hint = "@@UBOOT_SIGN_KEYNAME@@";
+                                padding = "pkcs-1.5";
+                                sign-images = "script";
+                        };
+                };
+        };
+};
+

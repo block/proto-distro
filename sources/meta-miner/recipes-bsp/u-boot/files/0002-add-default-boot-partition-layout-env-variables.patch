@@ -1,0 +1,49 @@
+From 2d5c85bcbe39355611b4942f301c66c7fe1a5e33 Mon Sep 17 00:00:00 2001
+From: BTCM SW Team <btcm-sw-team@squareup.com>
+Date: Tue, 31 Mar 2026 14:33:09 +0000
+Subject: [PATCH] add default boot partition layout env variables
+
+%% original patch: 0002-add-default-boot-partition-layout-env-variables.patch
+
+diff --git a/include/configs/stm32mp13_common.h b/include/configs/stm32mp13_common.h
+index a0e90762af7..57f3b788b9a 100644
+--- a/include/configs/stm32mp13_common.h
++++ b/include/configs/stm32mp13_common.h
+@@ -139,10 +139,19 @@
+ 	"fdtoverlay_addr_r=" __FDTOVERLAY_ADDR_R "\0" \
+ 	"ramdisk_addr_r=" __RAMDISK_ADDR_R "\0"
+ 
++#define STM32MP_BOOT_PART_LAYOUT \
++	"a_part_blk_addr=" __stringify(0x5400) "\0" \
++	"b_part_blk_addr=" __stringify(0x205400) "\0" \
++	"recovery_part_blk_addr=" __stringify(0x405400) "\0" \
++	"rootfs_part_size=" __stringify(0x200000) "\0" \
++	"recovery_part_copy_blk_cnt=" __stringify(0x80000) "\0" \
++	"data_part_blk_addr=" __stringify(0x00605400) "\0"
++
+ #define CONFIG_EXTRA_ENV_SETTINGS \
+ 	STM32MP_MEM_LAYOUT \
+ 	STM32MP_BOOTCMD \
+ 	BOOTENV \
++	STM32MP_BOOT_PART_LAYOUT \
+ 	STM32MP_EXTRA \
+ 	STM32MP_BOARD_EXTRA_ENV
+ 
+diff --git a/include/configs/stm32mp13_st_common.h b/include/configs/stm32mp13_st_common.h
+index 82a428fe630..ff2c45dc7e7 100644
+--- a/include/configs/stm32mp13_st_common.h
++++ b/include/configs/stm32mp13_st_common.h
+@@ -43,11 +43,13 @@
+ 		"run distro_bootcmd;" \
+ 	"fi;\0"
+ 
++
+ #undef CONFIG_EXTRA_ENV_SETTINGS
+ #define CONFIG_EXTRA_ENV_SETTINGS \
+ 	STM32MP_MEM_LAYOUT \
+ 	ST_STM32MP13_BOOTCMD \
+ 	BOOTENV \
++	STM32MP_BOOT_PART_LAYOUT \
+ 	STM32MP_EXTRA \
+ 	STM32MP_BOARD_EXTRA_ENV
+ 

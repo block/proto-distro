@@ -1,0 +1,13 @@
+/* SPDX-License-Identifier: (GPL-2.0+ OR BSD-3-Clause) */
+/*
+* Copyright (C) STMicroelectronics 2024 - All Rights Reserved
+* Author: STM32CubeMX code generation for STMicroelectronics.
+*/
+
+#include "stm32mp131f-c2-common.dtsi"
+
+/ {
+    board-rev = "C2-P1";
+    model = "Block Proto C2-P1 STM32MP131F Miner Controller Board";
+    compatible = "st,stm32mp131f-c2p1", "st,stm32mp131";
+};

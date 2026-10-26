@@ -1,0 +1,95 @@
+# syntax=docker/dockerfile:1
+# Stage 1: Build Go injector binary
+FROM golang:1.24-alpine AS go-builder
+WORKDIR /build
+COPY tools/distro/go.mod tools/distro/go.sum ./
+COPY tools/distro/cmd/injector/ ./cmd/injector/
+COPY tools/distro/internal/color/ ./internal/color/
+COPY tools/distro/internal/fileutil/ ./internal/fileutil/
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o injector ./cmd/injector
+
+# Stage 2: Build opkg and runtime image
+FROM ubuntu:24.04
+
+LABEL org.opencontainers.image.authors="btcm-sw-team@squareup.com"
+LABEL org.opencontainers.image.description="IPK package injector for ext4 images"
+LABEL org.opencontainers.image.licenses=Apache-2.0
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Install runtime dependencies and build tools for opkg
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    e2fsprogs \
+    util-linux \
+    file \
+    ca-certificates \
+    gnupg \
+    python3 \
+    python3-venv \
+    openssl \
+    coreutils \
+    cmake \
+    curl \
+    g++ \
+    make \
+    pkg-config \
+    zlib1g-dev \
+    libarchive-dev \
+    libcurl4-openssl-dev \
+    libgpgme-dev \
+    libssl-dev \
+    libsolv-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Download and build opkg from source (with GPG signature verification)
+ARG OPKG_VERSION=0.9.0
+RUN cd /tmp && \
+    curl -LO https://downloads.yoctoproject.org/releases/opkg/opkg-${OPKG_VERSION}.tar.gz && \
+    curl -LO https://downloads.yoctoproject.org/releases/opkg/opkg-${OPKG_VERSION}.tar.gz.asc && \
+    curl -LO https://downloads.yoctoproject.org/releases/opkg/keys/opkg.signing.key.asc && \
+    gpg --import opkg.signing.key.asc && \
+    gpg --verify opkg-${OPKG_VERSION}.tar.gz.asc opkg-${OPKG_VERSION}.tar.gz && \
+    tar xzf opkg-${OPKG_VERSION}.tar.gz && \
+    cd opkg-${OPKG_VERSION} && \
+    mkdir out && cd out && \
+    cmake .. \
+        -DCMAKE_INSTALL_PREFIX="/usr" \
+        -DUSE_SOLVER_LIBSOLV=ON && \
+    make -j$(nproc) && \
+    make install && \
+    rm -rf /tmp/opkg-${OPKG_VERSION} /tmp/opkg-${OPKG_VERSION}.tar.gz /tmp/opkg-${OPKG_VERSION}.tar.gz.asc /tmp/opkg.signing.key.asc && \
+    apt-get purge -y --auto-remove cmake curl g++ make pkg-config && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:0.12.17 /uv /uvx /usr/local/bin/
+
+RUN --mount=type=bind,source=python,target=/tmp/security-source <<'SH'
+set -eu
+python3 - <<'PY'
+import shutil
+shutil.copytree(
+    '/tmp/security-source', '/tmp/security-build',
+    ignore=shutil.ignore_patterns(
+        '.venv', 'build', 'dist', '*.egg-info', '__pycache__',
+        '.pytest_cache', '.mypy_cache', '.ruff_cache', '.tox',
+        'tests', 'test_artifacts', 'default_ta.pem',
+    ),
+)
+PY
+UV_PROJECT_ENVIRONMENT=/opt/proto-distro-security-tools \
+    uv sync --project /tmp/security-build --locked --no-dev --no-editable \
+    --python /usr/bin/python3 --no-python-downloads --no-cache
+rm -rf /tmp/security-build
+for command in fsbl_signer cot_signer optee_keys replace_uboot_avbkey create_avb_image verify_avb_image avbtool; do
+    ln -s "/opt/proto-distro-security-tools/bin/$command" "/usr/local/bin/$command"
+done
+SH
+
+RUN mkdir -p /work/rootfs
+
+# Copy Go binary from builder stage
+COPY --from=go-builder /build/injector /usr/local/bin/
+
+WORKDIR /work
+
+ENTRYPOINT ["/usr/local/bin/injector"]

@@ -1,0 +1,25 @@
+From 912e86c3189c340168865271b19eab706b1c12a2 Mon Sep 17 00:00:00 2001
+From: BTCM SW Team <btcm-sw-team@squareup.com>
+Date: Wed, 4 Jun 2025 21:46:27 -0400
+Subject: [PATCH] Fix bug in stm32-romem when writing to 31th word
+
+---
+ drivers/nvmem/stm32-romem.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/nvmem/stm32-romem.c b/drivers/nvmem/stm32-romem.c
+index bb1d52988..058ef24a6 100644
+--- a/drivers/nvmem/stm32-romem.c
++++ b/drivers/nvmem/stm32-romem.c
+@@ -678,7 +678,7 @@ static int stm32_bsec_pta_write(void *context, unsigned int offset, void *buf,
+ 		offset / 4, (offset + bytes) / 4, ret);
+ 
+ 	/* Lock the upper OTPs with ECC protection, word programming only */
+-	if (!ret && ((offset + bytes) >= (romem_priv->lower * 4))) {
++	if (!ret && ((offset + bytes) > (romem_priv->lower * 4))) {
+ 		u32 start, nb_lock;
+ 		u32 *lock = (u32 *)shm_buf;
+ 		int i;
+-- 
+2.49.0
+

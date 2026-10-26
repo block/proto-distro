@@ -1,0 +1,42 @@
+version: 2
+project_name: proto-swupdate
+builds:
+  - id: proto-swupdate
+    main: ./cmd/proto-swupdate
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X main.Version={{ if .Env.DISTRO_VERSION }}{{ .Env.DISTRO_VERSION }}{{ else }}{{ .Version }}{{ end }}
+      - -X main.GitCommit={{.ShortCommit}}
+    goos:
+      - linux
+    goarch:
+      - arm
+    goarm:
+      - 7
+nfpms:
+  - id: proto-swupdate
+    package_name: proto-swupdate
+    file_name_template: >-
+      {{ .PackageName }}_{{ .Arch }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}_
+      {{- if .Env.DISTRO_VERSION }}{{ .Env.DISTRO_VERSION }}
+      {{- else }}{{ .Version }}{{ end }}
+    vendor: Block Inc.
+    maintainer: Proto SW Team <btcm-sw-team@squareup.com>
+    description: SWUpdate orchestration and FWU metadata tool
+    formats:
+      - ipk
+    bindir: /usr/bin
+    replaces:
+      - fwu-metadata-tool
+archives:
+  - formats:
+      - binary
+    name_template: "{{ .ProjectName }}"
+dist: ../../dist/proto-swupdate/release
+changelog:
+  disable: true
+release:
+  disable: true

@@ -1,0 +1,100 @@
+From 8a14bcfb7440c8608cdd831a58aa1091cc5c70e4 Mon Sep 17 00:00:00 2001
+From: BTCM SW Team <btcm-sw-team@squareup.com>
+Date: Thu, 15 May 2025 10:08:29 -0400
+Subject: [PATCH 05/17] Detect IO board ID
+
+%% original patch: 0002-Detect-io-board-id.patch
+---
+ board/st/stm32mp1/stm32mp1.c | 46 +++++++++++++++++++++++++++++++-----
+ 1 file changed, 40 insertions(+), 6 deletions(-)
+
+diff --git a/board/st/stm32mp1/stm32mp1.c b/board/st/stm32mp1/stm32mp1.c
+index da62f98ab0a..409c12cff23 100644
+--- a/board/st/stm32mp1/stm32mp1.c
++++ b/board/st/stm32mp1/stm32mp1.c
+@@ -96,6 +96,13 @@ DECLARE_GLOBAL_DATA_PTR;
+ 
+ static int proto_cb_mmc_devnum = -1;
+ 
++typedef enum {
++	PROTO_IO_BOARD_DEFAULT = 0,
++	PROTO_IO_BOARD_RGB,
++} proto_io_board_type_t;
++
++proto_io_board_type_t io_board_type = PROTO_IO_BOARD_DEFAULT;
++
+ int board_early_init_f(void)
+ {
+ 	/* nothing to do, only used in SPL */
+@@ -625,17 +632,17 @@ error:
+ 
+ static void proto_cb_btn_check(void) {
+ 	struct udevice *rst_btn;
+-	char *btn_name = "Power";
++	char *btn_name = "Factory Reset";
+ 
+-	int ret = button_get_by_label("power-button", &rst_btn);
++	int ret = button_get_by_label("factory-reset-button", &rst_btn);
+ 	if (ret) {
+-		// Power button is not used for this config, try if factory-reset button exist
+-		ret = button_get_by_label("factory-reset-button", &rst_btn);
++		// Factory reset button is not used for this config, try if power button exist
++		ret = button_get_by_label("power-button", &rst_btn);
+ 		if (ret) {
+ 			// Neither button is available
+ 			return;
+ 		}
+-		btn_name = "Factory Reset";
++		btn_name = "Power";
+ 	}
+ 
+ 	if (button_get_state(rst_btn)) {
+@@ -654,17 +661,44 @@ static void proto_cb_btn_check(void) {
+ 	}
+ }
+ 
++static void proto_cb_board_prob_io_board(void) {
++	ofnode node;
++	struct gpio_desc io_board_id;
++
++	// If io_board_id exist, try to detect which IO board is attached
++	node = ofnode_path("/config");
++	if (gpio_request_by_name_nodev(node, "proto,io_board_id", 0, &io_board_id, GPIOD_IS_IN)) {
++			log_debug("could not find a /config/proto,io_board_id\n");
++		// There isn't IO Board ID to detect skip
++		return;
++	} else {
++		io_board_type = dm_gpio_get_value(&io_board_id); 
++		log_notice("IO board ID: %d\n", io_board_type);
++	}
++}
++
+ static void proto_cb_board_init(void) {
+ 	int ret = env_select("MMC");
+ 	ret = !ret && env_load();
+ 	if (ret < 0) {
+ 		log_err("Failed to load env (%d)\n", ret);
+-		log_info("Init Proto CB env variables.\n");
+ 	}
++
++	proto_cb_board_prob_io_board();
+ }
+ 
+ static void board_proto_cb_late_init(void)
+ {
++	if (io_board_type == PROTO_IO_BOARD_RGB) {
++		const char *io_rgb_conf = fdtdec_get_config_string(gd->fdt_blob, "u-boot,io-rgb-fdt");
++		char boot_conf[64];
++		snprintf(boot_conf, sizeof(boot_conf), "#conf-%s", io_rgb_conf);
++		env_set("kernel_boot_conf", boot_conf);
++	} else {
++		// Use default boot config
++		env_set("kernel_boot_conf", "");
++	}
++	// Don't bother saving the env variable since it will be updated everytime and used immediately
+ }
+ 
+ static bool board_is_proto_cb(void)
+-- 
+2.53.0
+

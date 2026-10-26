@@ -1,0 +1,12 @@
+Version: 1.0.16
+Product: C3
+
+Dev hw-config:
+  File: hw-config.bin.reference
+  Generated: 2025-10-22 05:51:45 UTC
+  SHA256: 0adf714c47bd60e1384bda5f95578149af763856e66f1afef83105eb693e9efd
+
+Prod hw-config:
+  File: hw-config-prod.bin.reference
+  Generated: 2025-09-15 (ceremony)
+  SHA256: 97b35dfaf2d1a5e1c15d72ee6517dab08259e7e11587f2b44cdb7edf39f6ddb5

@@ -1,0 +1,245 @@
+/* SPDX-License-Identifier: (GPL-2.0+ OR BSD-3-Clause) */
+/*
+* Copyright (C) STMicroelectronics 2024 - All Rights Reserved
+* Author: STM32CubeMX code generation for STMicroelectronics.
+*/
+
+/dts-v1/;
+#include "stm32mp131f-cx.dtsi"
+#include "stm32mp131f-c2-pinctrl.dtsi"
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/leds/common.h>
+
+/ {
+    aliases {
+        ethernet0 = &eth1;
+        serial0 = &uart4;
+        serial1 = &usart1;
+        serial2 = &uart8;
+        serial3 = &usart2;
+        i2c1 = &i2c1;
+        i2c3 = &i2c3;
+        i2c5 = &i2c5;
+    };
+
+    /* Fan control nodes */
+    fan0: pwm-fan0 {
+        compatible = "pwm-fan";
+        /* TIM16: Ch1, 25kHz, Inverted polarity */
+        pwms = <&pwm16 0 40000 1>;
+        interrupts-extended = <&gpiof 13 IRQ_TYPE_EDGE_FALLING>;
+        interrupt-names = "fan0-tach";
+    };
+
+    fan2: pwm-fan1 {
+        compatible = "pwm-fan";
+        /* TIM13: Ch1, 25kHz, Inverted polarity */
+        pwms = <&pwm13 0 40000 1>;
+        interrupts-extended = <&gpioa 3 IRQ_TYPE_EDGE_FALLING>;
+        interrupt-names = "fan1-tach";
+    };
+
+    fan1: pwm-fan2 {
+        compatible = "pwm-fan";
+        /* TIM17: Ch1, 25kHz, Inverted polarity */
+        pwms = <&pwm17 0 40000 1>;
+        interrupts-extended = <&gpiof 10 IRQ_TYPE_EDGE_FALLING>;
+        interrupt-names = "fan2-tach";
+    };
+
+    fan3: pwm-fan3 {
+        compatible = "pwm-fan";
+        /* TIM14: Ch1, 25kHz, Inverted polarity */
+        pwms = <&pwm14 0 40000 1>;
+        interrupts-extended = <&gpioa 5 IRQ_TYPE_EDGE_FALLING>;
+        interrupt-names = "fan3-tach";
+    };
+};
+
+/* PSU_EN_N/HASH_EN_N - hashrail enable */
+&gpioh {
+    hog_h8: gpio-hog-h8 {
+        gpio-hog;
+        gpios = <8 GPIO_ACTIVE_LOW>;
+        output-high;
+        line-name = "hash_en_n";
+    };
+};
+
+/* LED driver I2C */
+&i2c1 {
+    status = "okay";
+    pinctrl-names = "default", "sleep";
+    pinctrl-0 = <&i2c1_pins_mx>;
+    pinctrl-1 = <&i2c1_sleep_pins_mx>;
+    clock-frequency = <100000>;
+
+    lp5012@14 {
+        compatible = "ti,lp5012";
+        reg = <0x14>;
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        multi-led@0 {
+            #address-cells = <1>;
+            #size-cells = <0>;
+            reg = <0>;
+            color = <8>; // LED_COLOR_ID_MULTI
+            function = LED_FUNCTION_ACTIVITY;
+            label = "led_hb";
+
+            led@0 {
+                reg = <0>;
+                color = <LED_COLOR_ID_RED>;
+            };
+
+            led@1 {
+                reg = <1>;
+                color = <LED_COLOR_ID_BLUE>;
+            };
+
+            led@2 {
+                reg = <2>;
+                color = <LED_COLOR_ID_GREEN>;
+            };
+        };
+
+        multi-led@1 {
+            #address-cells = <1>;
+            #size-cells = <0>;
+            reg = <1>;
+            color = <8>; // LED_COLOR_ID_MULTI
+            function = LED_FUNCTION_ACTIVITY;
+            label = "led_fan";
+
+            led@0 {
+                reg = <0>;
+                color = <LED_COLOR_ID_RED>;
+            };
+
+            led@1 {
+                reg = <1>;
+                color = <LED_COLOR_ID_BLUE>;
+            };
+
+            led@2 {
+                reg = <2>;
+                color = <LED_COLOR_ID_GREEN>;
+            };
+        };
+
+        multi-led@2 {
+            #address-cells = <1>;
+            #size-cells = <0>;
+            reg = <2>;
+            color = <8>; // LED_COLOR_ID_MULTI
+            function = LED_FUNCTION_ACTIVITY;
+            label = "led_cb";
+
+            led@0 {
+                reg = <0>;
+                color = <LED_COLOR_ID_RED>;
+            };
+
+            led@1 {
+                reg = <1>;
+                color = <LED_COLOR_ID_BLUE>;
+            };
+
+            led@2 {
+                reg = <2>;
+                color = <LED_COLOR_ID_GREEN>;
+            };
+        };
+
+        multi-led@3 {
+            #address-cells = <1>;
+            #size-cells = <0>;
+            reg = <3>;
+            color = <8>; // LED_COLOR_ID_MULTI
+            function = LED_FUNCTION_ACTIVITY;
+            label = "led_psu";
+
+            led@0 {
+                reg = <0>;
+                color = <LED_COLOR_ID_RED>;
+            };
+
+            led@1 {
+                reg = <1>;
+                color = <LED_COLOR_ID_BLUE>;
+            };
+
+            led@2 {
+                reg = <2>;
+                color = <LED_COLOR_ID_GREEN>;
+            };
+        };
+    };
+};
+
+/* USB 4-Port Hub I2C - Override product name and serial only */
+&i2c3 {
+    usb2514b@2c {
+        product = "C2";
+        serial = "1234567890A";
+    };
+};
+
+/* PSU on I2C5 */
+&i2c5 {
+    status = "okay";
+    pinctrl-names = "default", "sleep";
+    pinctrl-0 = <&i2c5_pins_mx>;
+    pinctrl-1 = <&i2c5_sleep_pins_mx>;
+};
+
+/* PWM timer configurations for fans */
+
+/* FAN1 PWM */
+&timers16 {
+    status = "okay";
+
+    pwm16: pwm {
+        status = "okay";
+        pinctrl-names = "default", "sleep";
+        pinctrl-0 = <&tim16_pwm_pins_mx>;
+        pinctrl-1 = <&tim16_pwm_sleep_pins_mx>;
+    };
+};
+
+/* FAN2 PWM */
+&timers17 {
+    status = "okay";
+
+    pwm17: pwm {
+        status = "okay";
+        pinctrl-names = "default", "sleep";
+        pinctrl-0 = <&tim17_pwm_pins_mx>;
+        pinctrl-1 = <&tim17_pwm_sleep_pins_mx>;
+    };
+};
+
+/* FAN3 PWM */
+&timers13 {
+    status = "okay";
+
+    pwm13: pwm {
+        status = "okay";
+        pinctrl-names = "default", "sleep";
+        pinctrl-0 = <&tim13_pwm_pins_mx>;
+        pinctrl-1 = <&tim13_pwm_sleep_pins_mx>;
+    };
+};
+
+/* FAN4 PWM */
+&timers14 {
+    status = "okay";
+
+    pwm14: pwm {
+        status = "okay";
+        pinctrl-names = "default", "sleep";
+        pinctrl-0 = <&tim14_pwm_pins_mx>;
+        pinctrl-1 = <&tim14_pwm_sleep_pins_mx>;
+    };
+};

@@ -1,0 +1,11 @@
+[Match]
+Name=eth*
+KernelCommandLine=!nfsroot
+
+[Network]
+DHCP=yes
+UseHostname=true
+
+[DHCPv4]
+VendorClassIdentifier=Block, Inc.
+ClientIdentifier=mac

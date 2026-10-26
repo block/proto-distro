@@ -1,0 +1,71 @@
+name: Publish Docker Containers (Distro)
+
+on:
+  pull_request:
+    paths:
+      - ".github/actions/docker-tag-publish/action.yml"
+      - ".github/workflows/docker-publish-distro.yml"
+      - "python/**"
+      - "docker/Dockerfile.builder"
+      - "docker/Dockerfile.injector"
+      - "docker/entrypoint.sh"
+      - "tools/distro/cmd/injector/**"
+      - "tools/distro/internal/color/**"
+      - "tools/distro/internal/fileutil/**"
+      - "tools/distro/go.mod"
+      - "tools/distro/go.sum"
+  push:
+    branches: main
+    paths:
+      - ".github/actions/docker-tag-publish/action.yml"
+      - ".github/workflows/docker-publish-distro.yml"
+      - "python/**"
+      - "docker/Dockerfile.builder"
+      - "docker/Dockerfile.injector"
+      - "docker/entrypoint.sh"
+      - "tools/distro/cmd/injector/**"
+      - "tools/distro/internal/color/**"
+      - "tools/distro/internal/fileutil/**"
+      - "tools/distro/go.mod"
+      - "tools/distro/go.sum"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish-builder:
+    name: Build and publish builder container
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Tag and publish
+        uses: ./.github/actions/docker-tag-publish
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          context: "."
+          dockerfile: "./docker/Dockerfile.builder"
+          image_name: "proto-distro-builder"
+
+  publish-injector:
+    name: Build and publish injector container
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Tag and publish
+        uses: ./.github/actions/docker-tag-publish
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          context: "."
+          dockerfile: "./docker/Dockerfile.injector"
+          image_name: "proto-distro-injector"

@@ -1,0 +1,36 @@
+        fip: {
+            bank_0: {
+                images: (
+                    {
+                        filename = "fip-ota.bin";
+                        sha256 = "$swupdate_get_sha256(fip-ota.bin)";
+                        device = "/dev/disk/by-partlabel/fip-a";
+                        type = "raw";
+                    }
+                );
+                scripts: (
+                    {
+                        filename = "fip-post-install.sh";
+                        sha256 = "$swupdate_get_sha256(fip-post-install.sh)";
+                        type = "postinstall";
+                    }
+                );
+            };
+            bank_1: {
+                images: (
+                    {
+                        filename = "fip-ota.bin";
+                        sha256 = "$swupdate_get_sha256(fip-ota.bin)";
+                        device = "/dev/disk/by-partlabel/fip-b";
+                        type = "raw";
+                    }
+                );
+                scripts: (
+                    {
+                        filename = "fip-post-install.sh";
+                        sha256 = "$swupdate_get_sha256(fip-post-install.sh)";
+                        type = "postinstall";
+                    }
+                );
+            };
+        };

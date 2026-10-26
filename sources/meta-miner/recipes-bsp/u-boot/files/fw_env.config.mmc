@@ -1,0 +1,3 @@
+/dev/disk/by-partlabel/u-boot-env		-0x4000		0x2000
+/dev/disk/by-partlabel/u-boot-env		-0x2000		0x2000
+

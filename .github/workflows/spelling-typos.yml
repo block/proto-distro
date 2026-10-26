@@ -1,0 +1,39 @@
+name: Spelling typos check
+
+on:
+  pull_request:
+
+jobs:
+  check:
+    name: Check typo spelling
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Activate hermit
+        uses: cashapp/activate-hermit@v1.1.4
+        with:
+          cache: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Get all changed python files
+        id: changed-files
+        uses: tj-actions/changed-files@v47
+        with:
+          separator: ","
+
+      - name: Format and check all changed files
+        if: steps.changed-files.outputs.any_changed == 'true'
+        env:
+          ALL_CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
+        run: |
+          IFS=',' read -r -a files <<< "$ALL_CHANGED_FILES"
+
+          for file in "${files[@]}"; do
+            # Skip empty entries
+            [[ -z "$file" ]] && continue
+
+            echo "Checking $file"
+            typos --force-exclude "$file"
+          done

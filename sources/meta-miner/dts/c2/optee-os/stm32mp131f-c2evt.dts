@@ -1,0 +1,14 @@
+/* SPDX-License-Identifier: (GPL-2.0+ OR BSD-3-Clause) */
+/*
+* Copyright (C) Block Inc.
+* Author: btcm-sw-team@block.xyz
+*/
+
+/dts-v1/;
+#include "stm32mp131f-c2-common.dtsi"
+
+/ {
+    board-rev = "C2-EVT";
+    model = "Block Proto C2-EVT STM32MP131 Miner Controller Board";
+    compatible = "st,stm32mp131f-stm32mp131fafx-c2evt-mx", "st,stm32mp131";
+};

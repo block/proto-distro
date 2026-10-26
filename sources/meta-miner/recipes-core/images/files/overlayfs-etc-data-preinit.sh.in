@@ -1,0 +1,99 @@
+#!/bin/sh
+
+echo "PREINIT: Start"
+
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+mount -o remount,rw / 2>/dev/null || true
+
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+
+#***************** Below added by Proto ******************
+# Check overlay device exists and fsck pass, else recreate the file system
+if fsck.{OVERLAYFS_ETC_FSTYPE} -n {OVERLAYFS_ETC_DEVICE}; then
+  echo "{OVERLAYFS_ETC_DEVICE} is clean."
+else
+  echo "{OVERLAYFS_ETC_DEVICE} is corrupted, recreating file system."
+  mkfs.{OVERLAYFS_ETC_FSTYPE} -q -F {OVERLAYFS_ETC_DEVICE}
+fi
+#***************** Above added by Proto ******************
+
+[ -z "$CONSOLE" ] && CONSOLE="/dev/console"
+
+BASE_OVERLAY_ETC_DIR={OVERLAYFS_ETC_MOUNT_POINT}/overlay-etc
+UPPER_DIR=$BASE_OVERLAY_ETC_DIR/upper
+WORK_DIR=$BASE_OVERLAY_ETC_DIR/work
+LOWER_DIR=$BASE_OVERLAY_ETC_DIR/lower
+
+mkdir -p {OVERLAYFS_ETC_MOUNT_POINT}
+if mount -n -t {OVERLAYFS_ETC_FSTYPE} \
+    -o {OVERLAYFS_ETC_MOUNT_OPTIONS} \
+    {OVERLAYFS_ETC_DEVICE} {OVERLAYFS_ETC_MOUNT_POINT}
+then
+    mkdir -p $UPPER_DIR
+    mkdir -p $WORK_DIR
+
+    # Reconcile overlay user-state with the running rootfs whenever its VERSION
+    # or VARIANT changes (normal OTA, cross-variant switch, manual downgrade, or
+    # auto-revert). Done before the overlay is mounted so the upper-dir edits are
+    # safe. This keeps the overlay from ever shadowing the rootfs with stale or
+    # root-locked creds (the latter broke cross-variant OTA), while leaving a
+    # working admin login plus an unlocked root behind - so whatever image boots
+    # next stays reachable, including downgrades to older builds whose creds only
+    # ever lived in this overlay, and auto-revert targets after a failed update.
+    STATE_FILE=$BASE_OVERLAY_ETC_DIR/.user-state
+    CUR_STATE=$(grep -E '^(VERSION|VARIANT)=' /usr/lib/os-release | sort | tr '\n' '|')
+    PREV_STATE=$(cat "$STATE_FILE" 2>/dev/null || true)
+    if [ "$CUR_STATE" != "$PREV_STATE" ]; then
+        echo "PREINIT: reconciling overlay user-state [$PREV_STATE] -> [$CUR_STATE]"
+        # Drop the overlay's stale os-release copy so /etc/os-release falls back
+        # to the rootfs symlink (-> /usr/lib/os-release) right away. Early
+        # services that branch on VARIANT (e.g. miner-firstboot, which runs
+        # before miner-boot refreshes the copy) then see the current rootfs's
+        # variant instead of the pre-switch one.
+        rm -f "$UPPER_DIR/os-release"
+        # root's login shell differs per variant (nologin on release, a real
+        # shell on mfg), so drop the overlay copy and let the rootfs's own
+        # passwd show through.
+        rm -f "$UPPER_DIR/passwd"
+        # Recovery shadow: copy this rootfs's shadow (admin password is baked
+        # into the lower layer of both variants) and force root's password field
+        # empty. Root login stays gated by the per-variant shell in passwd above,
+        # so empty-root never unlocks release but does permit mfg serial
+        # autologin. Written via temp+rename so a crash can't leave a partial
+        # shadow for a revert target to inherit.
+        SHADOW_TMP=$UPPER_DIR/.shadow.tmp
+        if cp -p /etc/shadow "$SHADOW_TMP"; then
+            sed -i -e 's/^root:[^:]*:/root::/' "$SHADOW_TMP"
+            chmod 0640 "$SHADOW_TMP"
+            mv -f "$SHADOW_TMP" "$UPPER_DIR/shadow"
+        fi
+        # Keep admin able to sudo on downgrade targets that expected it in the
+        # overlay; mirrors the sudoers file baked into the rootfs.
+        if [ -f /etc/sudoers.d/admin ]; then
+            mkdir -p "$UPPER_DIR/sudoers.d"
+            cp -p /etc/sudoers.d/admin "$UPPER_DIR/sudoers.d/admin"
+        fi
+        echo "$CUR_STATE" > "$STATE_FILE"
+    fi
+
+    if {OVERLAYFS_ETC_EXPOSE_LOWER}; then
+        mkdir -p $LOWER_DIR
+
+        # provide read-only access to original /etc content
+        mount -o bind,ro /etc $LOWER_DIR
+    fi
+
+    mount -n -t overlay \
+        -o upperdir=$UPPER_DIR \
+        -o lowerdir=/etc \
+        -o workdir=$WORK_DIR \
+        -o index=off,xino=off,redirect_dir=off,metacopy=off \
+        $UPPER_DIR /etc || \
+            echo "PREINIT: Mounting etc-overlay failed!"
+else
+    echo "PREINIT: Mounting </data> failed!"
+fi
+
+echo "PREINIT: done; starting </sbin/init>"
+exec {SBIN_INIT_NAME}

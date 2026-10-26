@@ -1,0 +1,62 @@
+[project]
+name = "proto-distro-security-tools"
+version = "0.0.0"
+description = "proto distro"
+requires-python = ">=3.12"
+
+dependencies = [
+    "asn1crypto",
+    "click",
+    "hvac",
+    "pyasn1",
+    "pyasn1_modules",
+    "pycryptodome",
+    "requests",
+    "pyelftools",
+    "cryptography"
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+include = ["fsbl*", "cot_signer*", "optee_keys*", "replace_uboot_avbkey*", "create_avb_image*"]
+exclude = ["*.tests", "*.tests.*", "tests*"]
+
+[tool.setuptools.package-data]
+"optee_keys" = ["data/default_keys/default_ta.pub.pem"]
+"create_avb_image._vendor" = ["UPSTREAM"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black==26.10.1",
+    "isort",
+]
+
+[project.scripts]
+fsbl_signer = "fsbl.fsbl_signer:cli"
+cot_signer = "cot_signer.cli.cli:cli"
+optee_keys = "optee_keys.cli.cli:cli"
+replace_uboot_avbkey = "replace_uboot_avbkey.replace_uboot_avbkey:main"
+create_avb_image = "create_avb_image.create_avb_image:main"
+verify_avb_image = "create_avb_image.create_avb_image:verify_main"
+avbtool = "create_avb_image.create_avb_image:avbtool_main"
+
+[tool.pytest.ini_options]
+testpaths = ["optee_keys/tests", "replace_uboot_avbkey/tests", "fsbl/tests", "cot_signer/tests"]
+python_files = ["test_*.py"]
+addopts = "-v --tb=short"
+
+[tool.black]
+line-length = 120
+skip-string-normalization = false
+
+[tool.isort]
+profile = "black"
+line_length = 120
+known_first_party = ["optee_keys", "fsbl", "cot_signer", "replace_uboot_avbkey"]

@@ -1,0 +1,83 @@
+Read the FIP signing key index from the proto-auth marker stashed by
+fsbl_signer inside the FSBL padding extension, and use it to pick the
+ROTPK hash out of the auth extension's pk_hashes[] table. Falls back
+to the auth extension's own pk_idx when the marker is absent so stock
+ST-signed images keep working.
+
+The STM32MP13 BootROM rejects unknown extension types, so proto
+metadata is hidden inside the known padding extension's payload.
+Producer side: python/fsbl/fsbl_signer.py (STM32PaddingHeader).
+
+--- a/plat/st/common/stm32mp_trusted_boot.c
++++ b/plat/st/common/stm32mp_trusted_boot.c
+@@ -23,6 +23,9 @@
+ 
+ #define HEADER_AND_EXT_TOTAL_SIZE 512
+ 
++/* Magic prefix placed by fsbl_signer inside the padding extension payload. */
++#define BOOT_API_PROTO_AUTH_MAGIC_NB 0x544F5250U /* 'P','R','O','T' LE */
++
+ static uint8_t der_sha256_header[] = {0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60,
+ 	0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20};
+ static uint8_t root_pk_hash[HASH_DER_LEN];
+@@ -81,6 +84,43 @@
+ }
+ 
+ #if STM32MP13
++/*
++ * Look up the FIP signing key index from the proto-auth prefix that
++ * fsbl_signer stashes in the padding extension payload. The prefix is
++ * 4 bytes of magic "PROT" followed by a little-endian u32 key index.
++ *
++ * Returns 0 and writes *fip_key_idx on success. Returns -ENOENT when the
++ * magic is absent (stock ST layout) so the caller can fall back.
++ */
++static int get_fip_key_idx_from_proto_auth(boot_api_image_header_t *hdr,
++					   uint32_t *fip_key_idx)
++{
++	uintptr_t cur = (uintptr_t)hdr->ext_header;
++	uintptr_t end = cur + hdr->extension_headers_length;
++
++	while (cur + sizeof(boot_extension_header_t) <= end) {
++		boot_extension_header_t *ext = (boot_extension_header_t *)cur;
++
++		if ((ext->len == 0U) || (cur + ext->len > end)) {
++			return -EINVAL;
++		}
++		if (ext->type == BOOT_API_PADDING_HEADER_MAGIC_NB) {
++			const uint32_t *p = (const uint32_t *)ext->params;
++
++			if (ext->len < (sizeof(*ext) + 2U * sizeof(uint32_t)) ||
++			    p[0] != BOOT_API_PROTO_AUTH_MAGIC_NB) {
++				return -ENOENT;
++			}
++			*fip_key_idx = p[1];
++			return 0;
++		}
++		cur += ext->len;
++	}
++	return -ENOENT;
++}
++#endif
++
++#if STM32MP13
+ static int get_rotpk_hash(void *cookie, uint8_t *hash, size_t len)
+ {
+ 	int ret;
+@@ -103,7 +143,15 @@
+ 
+ 	param = (boot_ext_header_params_authentication_t *)ext_header->params;
+ 
+-	pk_idx = param->pk_idx;
++	/*
++	 * Prefer the FIP signing key index stashed in the padding extension
++	 * by our proto-signer; fall back to the auth extension's own pk_idx
++	 * (used by stock ST-signed images) when the marker isn't present.
++	 */
++	if ((get_fip_key_idx_from_proto_auth(hdr, &pk_idx) != 0) ||
++	    (pk_idx >= param->nb_pk)) {
++		pk_idx = param->pk_idx;
++	}
+ 
+ 	stm32_hash_init(HASH_SHA256);
+ 	ret = stm32_hash_final_update((uint8_t *)param->pk_hashes,

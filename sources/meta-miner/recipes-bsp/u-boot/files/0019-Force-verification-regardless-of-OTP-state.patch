@@ -1,0 +1,51 @@
+From: BTCM SW Team <btcm-sw-team@squareup.com>
+Subject: [PATCH] Force verification regardless of OTP state
+
+Treat the board as locked for verification policy, regardless of the lock
+OTP or user unlock register. The existing late-init path restores verify=y
+before boot scripts run, including when the saved environment has verify=n.
+
+Apply only with UBOOT_FORCE_VERIFY = "1". This is a build-time override,
+not an environment switch, and does not write OTP or establish hardware
+secure boot. Signed boot artifacts matching the configured keys are still
+required; release boot scripts also require a valid AVB rootfs.
+
+Upstream-Status: Inappropriate [Proto board verification policy]
+---
+ board/st/stm32mp1/stm32mp1.c | 24 ++----------------------
+ 1 file changed, 2 insertions(+), 22 deletions(-)
+
+diff --git a/board/st/stm32mp1/stm32mp1.c b/board/st/stm32mp1/stm32mp1.c
+--- a/board/st/stm32mp1/stm32mp1.c
++++ b/board/st/stm32mp1/stm32mp1.c
+@@ -818,28 +818,8 @@ static int proto_cb_get_part_info(struct blk_desc *mmc_dev, const char *name, struct disk_partition *info)
+ 	return -ENOENT;
+ }
+ static bool proto_cb_device_locked(void){
+-	uint32_t lock_reg = 0;
+-	int ret = fuse_read(PROTO_CB_FUSE_BANK, PROTO_CB_DEVICE_LOCK_OTP_INDEX, &lock_reg);
+-	if (ret) {
+-		log_err("Failed to read device lock reg!");
+-		return true;
+-	}
+-
+-	// If lock OTP is not set, device is not locked
+-	if ((lock_reg & PROTO_CB_DEVICE_LOCK_OTP_MASK) == 0) {
+-		return false;
+-	}
+-
+-	// Lock OTP is set, check if user has unlocked
+-	uint32_t unlock_reg = 0;
+-	ret = fuse_read(PROTO_CB_FUSE_BANK, PROTO_CB_FUSE_UNLOCK_REG_WORD_IDX, &unlock_reg);
+-	if (ret) {
+-		log_err("Failed to read device unlock reg!");
+-		return true;
+-	}
+-
+-	// Device is locked if unlock register is not set
+-	return unlock_reg == 0;
++	/* Build-time policy override; do not consult or modify OTP. */
++	return true;
+ }
+ 
+ static void proto_cb_set_hostname(void){

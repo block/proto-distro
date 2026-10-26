@@ -1,0 +1,31 @@
+/* SPDX-License-Identifier: (GPL-2.0+ OR BSD-3-Clause) */
+/*
+* Copyright (C) STMicroelectronics 2024 - All Rights Reserved
+* Author: STM32CubeMX code generation for STMicroelectronics.
+*/
+
+#include "stm32mp131f-c2-common.dtsi"
+#include "stm32mp131f-cx-thermal-sensor.dtsi"
+
+/ {
+    board-rev = "C2-EVT";
+    model = "Block Proto C2-EVT STM32MP131F Miner Controller Board";
+    compatible = "st,stm32mp131f-c2evt", "st,stm32mp131";
+
+    // On C2 EVT this power button shares interrupt with FAN1_TACH
+    // This means we need to poll the button instead of using interrupts
+    power-button {
+        status = "okay";
+        compatible = "gpio-keys-polled";
+        #address-cells = <1>;
+        #size-cells = <0>;
+        poll-interval = <100>;
+        autorepeat;
+
+        power-button {
+            label = "power-button";
+            linux,code = <KEY_POWER>;
+            gpios = <&gpioe 13 GPIO_ACTIVE_LOW>;
+        };
+    };
+};

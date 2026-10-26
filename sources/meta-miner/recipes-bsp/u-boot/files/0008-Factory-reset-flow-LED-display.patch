@@ -1,0 +1,183 @@
+From daf46d790da9dd5f27225adb1195aef9acbd23ed Mon Sep 17 00:00:00 2001
+From: BTCM SW Team <btcm-sw-team@squareup.com>
+Date: Mon, 26 May 2025 15:28:01 -0400
+Subject: [PATCH 08/17] Factory reset flow LED display
+
+%% original patch: 0002-Factory-reset-flow-LED-display.patch
+---
+ board/st/stm32mp1/stm32mp1.c | 100 ++++++++++++++++++++++++++++++-----
+ configs/stm32mp13_defconfig  |   2 +
+ 2 files changed, 88 insertions(+), 14 deletions(-)
+
+diff --git a/board/st/stm32mp1/stm32mp1.c b/board/st/stm32mp1/stm32mp1.c
+index d14c917fe35..ec000c8c0f9 100644
+--- a/board/st/stm32mp1/stm32mp1.c
++++ b/board/st/stm32mp1/stm32mp1.c
+@@ -80,8 +80,9 @@
+ #define GOODIX_REG_ID		0x8140
+ #define GOODIX_ID_LEN		4
+ 
+-#define POWER_BTN_FACTORY_RESET_DELAY_MS 5000
+-#define POWER_BTN_POLL_INTERVAL_MS 1
++// Duration of time power button is held to enter factory reset countdown
++#define POWER_BTN_FACTORY_RESET_DELAY_MS 10000
++#define POWER_BTN_POLL_INTERVAL_MS 50
+ 
+ /*
+  * Get a global data pointer
+@@ -95,11 +96,9 @@ DECLARE_GLOBAL_DATA_PTR;
+ 
+ #define PROTO_CB_DEFAULT_DEVNUM 1
+ 
+-static int proto_cb_mmc_devnum = -1;
+-
+ typedef enum {
+ 	PROTO_IO_BOARD_DEFAULT = 0,
+-	PROTO_IO_BOARD_RGB,
++	PROTO_IO_BOARD_RGB = 0x1,
+ } proto_io_board_type_t;
+ 
+ proto_io_board_type_t io_board_type = PROTO_IO_BOARD_DEFAULT;
+@@ -631,9 +630,70 @@ error:
+ 	return ret;
+ }
+ 
++static void proto_cb_led_set(enum led_state_t state, u32 brightness, char seven_seg_value) {
++	struct udevice *led_7seg = NULL, *led_hb = NULL, *led_cb = NULL;
++	struct udevice *led_psu = NULL, *led_fan = NULL, *led_status = NULL;
++	led_get_by_label("led_7seg", &led_7seg);
++	led_get_by_label("led_hb", &led_hb);
++	led_get_by_label("led_cb", &led_cb);
++	led_get_by_label("led_psu", &led_psu);
++	led_get_by_label("led_fan", &led_fan);
++	led_get_by_label("led_status", &led_status);
++
++	if (state == LEDST_OFF) {
++		if (led_hb)
++			led_set_state(led_hb, LEDST_OFF);
++		if (led_cb)
++			led_set_state(led_cb, LEDST_OFF);
++		if (led_psu)
++			led_set_state(led_psu, LEDST_OFF);
++		if (led_fan)
++			led_set_state(led_fan, LEDST_OFF);
++		if (led_status)
++			led_set_state(led_status, LEDST_OFF);
++		if (led_7seg)
++			led_set_state(led_7seg, LEDST_OFF);
++	} else {
++		u32 color_mask = 1 << LED_COLOR_ID_RED;
++		if (led_hb)
++			led_set_color(led_hb, color_mask, brightness);
++		if (led_cb)
++			led_set_color(led_cb, color_mask, brightness);
++		if (led_psu)
++			led_set_color(led_psu, color_mask, brightness);
++		if (led_fan)
++			led_set_color(led_fan, color_mask, brightness);
++		if (led_status) 
++			led_set_color(led_status, color_mask, brightness);
++
++		if (led_7seg) {
++			char current_value = led_get_state(led_7seg);
++			if (current_value != seven_seg_value) {
++				led_set_state(led_7seg, seven_seg_value);
++			}
++		}
++	}
++}
++
++static bool factory_reset_countdown_on_cycle = false;
++static void proto_cb_factory_reset_countdown_refresh(ulong count_down_ms) {
++	bool on_cycle = count_down_ms % 1000 > 500;
++	// If the cycle is the same as the previous cycle, don't update the LED
++	if (factory_reset_countdown_on_cycle == on_cycle)
++		return;
++
++	if (on_cycle) {
++		char next_value = '0' + (count_down_ms / 1000);
++		proto_cb_led_set(LEDST_ON, 100, next_value);
++	} else {
++		proto_cb_led_set(LEDST_OFF, 0, 0);
++	}
++	factory_reset_countdown_on_cycle = on_cycle;
++}
++
+ static void proto_cb_btn_check(void) {
+-	struct udevice *rst_btn;
+-	char *btn_name = "Factory Reset";
++	struct udevice* rst_btn;
++	char* btn_name = "Factory Reset";
+ 
+ 	int ret = button_get_by_label("factory-reset-button", &rst_btn);
+ 	if (ret) {
+@@ -647,19 +707,30 @@ static void proto_cb_btn_check(void) {
+ 	}
+ 
+ 	if (button_get_state(rst_btn)) {
++		ulong start_time_ms = get_timer(0);
++		bool factory_reset_triggered = false;
++
+ 		log_info("%s button is held!\n", btn_name);
+-		int power_btn_held_count_ms = 0;
+-		while(button_get_state(rst_btn) && (power_btn_held_count_ms <= POWER_BTN_FACTORY_RESET_DELAY_MS)) {
++		ulong ts = get_timer(start_time_ms);
++		while (ts < POWER_BTN_FACTORY_RESET_DELAY_MS) {
++			if (!button_get_state(rst_btn)) {
++				break;
++			}
++			proto_cb_factory_reset_countdown_refresh(POWER_BTN_FACTORY_RESET_DELAY_MS - ts);
+ 			mdelay(POWER_BTN_POLL_INTERVAL_MS);
+-			power_btn_held_count_ms += POWER_BTN_POLL_INTERVAL_MS;
++			ts = get_timer(start_time_ms);
+ 		}
+-		if (power_btn_held_count_ms > POWER_BTN_FACTORY_RESET_DELAY_MS) {
++
++		// If time have elapsed and button is still held, trigger factory reset
++		if ((get_timer(start_time_ms) > POWER_BTN_FACTORY_RESET_DELAY_MS) && 
++			button_get_state(rst_btn)) {
+ 			env_set("factory_reset", "y");
+ 			env_save();
+ 		} else {
+ 			log_info("%s button is released! Skipping factory reset.\n", btn_name);
+ 		}
+ 	}
++	proto_cb_led_set(LEDST_OFF, 0, 0);
+ }
+ 
+ static void proto_cb_board_probe_io_board(void) {
+@@ -669,8 +740,9 @@ static void proto_cb_board_probe_io_board(void) {
+ 	// If io_board_id exist, try to detect which IO board is attached
+ 	node = ofnode_path("/config");
+ 	if (gpio_request_by_name_nodev(node, "proto,io_board_id", 0, &io_board_id, GPIOD_IS_IN)) {
+-		log_err("could not find a /config/proto,io_board_id\n");
++		log_debug("could not find a /config/proto,io_board_id\n");
+ 		// There isn't IO Board ID to detect skip
++		gd->board_type = PROTO_IO_BOARD_DEFAULT;
+ 		return;
+ 	} else {
+ 		int board_id = dm_gpio_get_value(&io_board_id);
+@@ -715,8 +787,8 @@ static void proto_cb_board_init(void) {
+ 	if (ret < 0) {
+ 		log_err("Failed to load env (%d)\n", ret);
+ 	}
+-
+-	proto_cb_board_prob_io_board();
++	proto_cb_board_probe_io_board();
++	setup_led(LEDST_ON);
+ }
+ 
+ static void board_proto_cb_late_init(void)
+diff --git a/configs/stm32mp13_defconfig b/configs/stm32mp13_defconfig
+index 4d62aaedf6a..0069ab66e7c 100644
+--- a/configs/stm32mp13_defconfig
++++ b/configs/stm32mp13_defconfig
+@@ -144,3 +144,5 @@ CONFIG_LMB_MEMORY_REGIONS=2
+ CONFIG_LMB_RESERVED_REGIONS=16
+ CONFIG_BUTTON=y
+ CONFIG_BUTTON_GPIO=y
++CONFIG_BOARD_TYPES=y
++CONFIG_LED_COLOR=y
+-- 
+2.53.0
+

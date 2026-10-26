@@ -1,0 +1,9 @@
+version: 0.0.12
+source: https://github.com/block/proto-distro/releases/tag/v0.0.12
+ceremony: https://block.atlassian.net/browse/SECENG-9528
+security_level: prod
+signing_authority: HWSEC (offline signing ceremony)
+binaries:
+  - tf-a-stm32mp131f-c3p1-emmc-0.0.12.stm32
+  - tf-a-stm32mp131f-c3p1-uart-0.0.12.stm32
+  - tf-a-stm32mp131f-c3p1-usb-0.0.12.stm32

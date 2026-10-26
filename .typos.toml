@@ -1,0 +1,24 @@
+[files]
+extend-exclude = ["**/_vendor/**"]
+
+[default]
+extend-ignore-words-re = [
+  # Ignore any words that is smaller than 3 characters
+  # since those are typically abbreviations
+  '^[a-zA-Z]{1,4}$',
+  'outout',
+  'Hashi',
+  'optin',           # CSS class name in Font Awesome (opt-in)
+  'passin',          # openssl -passin flag
+  'COUNTR',
+]
+
+extend-ignore-re = [
+  "\\b[0-9A-Za-z+/]{91}(=|==)?\\b",  # base64 strings
+  "[0-9a-fA-F]{7,}",                 # git commit hashes
+  "\\b[0-9A-Za-z+/]{33,}(=|==)?\\b", # SHA/tpub/adresses etc strings
+]
+
+[default.extend-words]
+# Yocto/BitBake variable: Package Name
+PN = "PN"

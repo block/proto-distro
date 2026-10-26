@@ -1,0 +1,241 @@
+/* SPDX-License-Identifier: (GPL-2.0+ OR BSD-3-Clause) */
+/*
+* Copyright (C) STMicroelectronics 2024 - All Rights Reserved
+* Author: STM32CubeMX code generation for STMicroelectronics.
+*/
+
+/dts-v1/;
+#include "stm32mp131f-cx.dtsi"
+#include "stm32mp131f-c3-pinctrl.dtsi"
+#include "stm32mp131f-cx-thermal-sensor.dtsi"
+
+/ {
+    config {
+        u-boot,io-rgb-fdt = "stm32mp131f-c3p1-io-rgb.dtb";
+    };
+
+    aliases {
+        ethernet0 = &eth1;
+        serial0 = &uart4;
+        serial1 = &usart1;
+        serial2 = &uart8;
+        serial3 = &usart2;
+        i2c1 = &i2c1;   /* IO Panel I2C */
+        i2c2 = &i2c2;   /* PMIC I2C */
+        i2c3 = &i2c3;   /* USB 4-Port Hub I2C */
+        i2c4 = &i2c4;   /* USB 7-Port Hub I2C */
+        i2c5 = &i2c5;   /* PSU I2C MUX */
+        spi5 = &spi5;   /* IO Panel LED Driver SPI */
+    };
+
+    power-button {
+        status = "okay";
+        compatible = "gpio-keys";
+        #address-cells = <1>;
+        #size-cells = <0>;
+        autorepeat;
+
+        power-button {
+            label = "power-button";
+            linux,code = <KEY_POWER>;
+            gpios = <&gpioe 13 GPIO_ACTIVE_LOW>;
+            interrupt-parent = <&gpioe>;
+            interrupts = <13 IRQ_TYPE_EDGE_FALLING>;
+        };
+    };
+
+    factory-reset-button {
+        status = "disabled";
+    };
+
+    config {
+        proto,io_board_id = <&gpiog 11 GPIO_PULL_DOWN>;
+    };
+
+    psu_driver_0: psu-pmbus-0 {
+        compatible = "block,psu-pmbus";
+        // Maps to physical slot / bay 1
+        psu-id = <1>;
+        status = "okay";
+        i2c-bus = <&i2c_mux0>;
+        probe-addresses = /bits/ 8 <0x08 0x10 0x58>;
+        initial-voltage-mv = <15500>;
+        update-interval-ms = <1000>;
+        status-check-interval-ms = <250>;
+        disconnect-threshold = <5>;
+        reconnect-poll-interval-ms = <5000>;
+        psu-en-gpio = <&gpioh 8 GPIO_ACTIVE_LOW>;
+    };
+
+    psu_driver_1: psu-pmbus-1 {
+        compatible = "block,psu-pmbus";
+        // Maps to physical slot / bay 2
+        psu-id = <2>;
+        status = "okay";
+        i2c-bus = <&i2c_mux1>;
+        probe-addresses = /bits/ 8 <0x08 0x10 0x58>;
+        initial-voltage-mv = <15500>;
+        update-interval-ms = <1000>;
+        status-check-interval-ms = <250>;
+        disconnect-threshold = <5>;
+        reconnect-poll-interval-ms = <5000>;
+        psu-en-gpio = <&gpioh 9 GPIO_ACTIVE_LOW>;
+    };
+
+    psu_driver_2: psu-pmbus-2 {
+        compatible = "block,psu-pmbus";
+        // Maps to physical slot / bay 3
+        psu-id = <3>;
+        status = "okay";
+        i2c-bus = <&i2c_mux2>;
+        probe-addresses = /bits/ 8 <0x08 0x10 0x58>;
+        initial-voltage-mv = <15500>;
+        update-interval-ms = <1000>;
+        status-check-interval-ms = <250>;
+        disconnect-threshold = <5>;
+        reconnect-poll-interval-ms = <5000>;
+        psu-en-gpio = <&gpioh 10 GPIO_ACTIVE_LOW>;
+    };
+};
+
+&eth1 {
+    max-speed = <100>;
+};
+
+&gpioe {
+    hog_e11: gpio-hog-e11 {
+        gpio-hog;
+        gpios = <11 GPIO_ACTIVE_LOW>;
+        input;
+        line-name = "io_panel_sense";
+        bias-pull-down;
+    };
+};
+
+/* Board-specific I2C configurations */
+
+/* PSU_EN_N - PSU enable */
+/* Enable the below when bringup is completed. EE will need to manually toggle these pins */
+/*
+&gpioh {
+    hog_h8: gpio-hog-h8 {
+        gpio-hog;
+        gpios = <8 GPIO_ACTIVE_LOW>;
+        output-high;
+        line-name = "psu1_en_n";
+    };
+
+    hog_h9: gpio-hog-h9 {
+        gpio-hog;
+        gpios = <9 GPIO_ACTIVE_LOW>;
+        output-high;
+        line-name = "psu2_en_n";
+    };
+
+    hog_h10: gpio-hog-h10 {
+        gpio-hog;
+        gpios = <10 GPIO_ACTIVE_LOW>;
+        output-high;
+        line-name = "psu3_en_n";
+    };
+};
+*/
+
+/* IO Panel I2C */
+&i2c1 {
+    pinctrl-names = "default", "sleep";
+    pinctrl-0 = <&i2c1_pins_mx>;
+    pinctrl-1 = <&i2c1_sleep_pins_mx>;
+    status = "okay";
+};
+
+/* USB 4-Port Hub I2C - Override product name and serial only */
+&i2c3 {
+    pinctrl-names = "default", "sleep";
+    pinctrl-0 = <&i2c3_pins_mx>;
+    pinctrl-1 = <&i2c3_sleep_pins_mx>;
+    status = "okay";
+    clock-frequency = <100000>;
+
+    usb2514b@2c {
+        product = "C3";
+        serial = "1234567890A";
+    };
+};
+
+/* USB 7-Port Hub I2C */
+&i2c4 {
+    pinctrl-names = "default", "sleep";
+    pinctrl-0 = <&i2c4_pins_mx>;
+    pinctrl-1 = <&i2c4_sleep_pins_mx>;
+    status = "okay";
+    clock-frequency = <100000>;
+
+    usb2517: usb2517@2c {
+        compatible = "microchip,usb2517";
+        reg = <0x2c>;
+        vendor-id = /bits/ 16 <0x0000>;
+        product-id = /bits/ 16 <0x0000>;
+        string-support;
+        manufacturer = "Block Inc";
+        product = "C3";
+        reset-gpios = <&gpioe 14 GPIO_ACTIVE_LOW>; /* USB7_RST_N */
+        /* Power supplied by always-on LDO1_3V3 from STPMIC1 */
+        sp-disabled-ports = <7>; /* Self-powered port disable - 0b01000000 (bit 6 for port 7) */
+        bp-disabled-ports = <7>; /* Bus-powered port disable - 0b01000000 (bit 6 for port 7) */
+    };
+};
+
+/* PSU I2C5 */
+&i2c5 {
+    pinctrl-names = "default", "sleep", "gpio";
+    pinctrl-0 = <&i2c5_pins_mx>;
+    pinctrl-1 = <&i2c5_sleep_pins_mx>;
+    pinctrl-2 = <&i2c5_pins_gpio>;  /* GPIO mode for bus recovery */
+    status = "okay";
+        clock-frequency = <100000>;
+
+    /* GPIO-based bus recovery - allows driver to toggle SCL/SDA as GPIOs to recover stuck bus */
+    scl-gpios = <&gpioh 13 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+    sda-gpios = <&gpiof 3 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+
+    i2c-mux@70 {
+        compatible = "nxp,pca9546";
+        /* The I2C Address is (0x70 + (A2<<4) + (A1<<2) + (A0<<1)), where A2, A1 and A0 are 1/0 */
+        /* On this board, the I2C address is 0x70, where A1, A2, A0 are all tied to ground */
+        reg = <0x70>;
+        #address-cells = <1>;
+        #size-cells = <0>;
+        vcc-supply = <&scmi_v3v3_sw>;    // Add this line, assuming v3v3_sw is your 3.3V rail
+        status = "okay";
+
+        i2c_mux0: i2c@0 {
+            #address-cells = <1>;
+            #size-cells = <0>;
+            reg = <0>;
+            label = "i2c_mux0";     /* This will show up as /dev/i2c-mux0 */
+        };
+
+        i2c_mux1: i2c@1 {
+            #address-cells = <1>;
+            #size-cells = <0>;
+            reg = <1>;
+            label = "i2c_mux1";     /* This will show up as /dev/i2c-mux1 */
+        };
+
+        i2c_mux2: i2c@2 {
+            #address-cells = <1>;
+            #size-cells = <0>;
+            reg = <2>;
+            label = "i2c_mux2";     /* This will show up as /dev/i2c-mux2 */
+        };
+    };
+};
+
+/* IO Panel UART1 */
+&usart1 {
+    pinctrl-names = "default", "sleep";
+    pinctrl-0 = <&uart1_pins_mx>;
+    pinctrl-1 = <&uart1_sleep_pins_mx>;
+    status = "okay";
+};

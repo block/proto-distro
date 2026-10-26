@@ -1,0 +1,30 @@
+/* SPDX-License-Identifier: (GPL-2.0+ OR BSD-3-Clause) */
+/*
+* Copyright (C) STMicroelectronics 2024 - All Rights Reserved
+* Author: STM32CubeMX code generation for STMicroelectronics.
+*/
+
+/dts-v1/;
+#include "stm32mp131f-c3-common.dtsi"
+#include "stm32mp131f-c3-io-common.dtsi"
+#include <dt-bindings/leds/common.h>
+
+/ {
+    board-rev = "C3-P1";
+    model = "Block Proto C3-P1 STM32MP131F Miner Controller Board";
+    compatible = "st,stm32mp131f-c3p1", "st,stm32mp131";
+};
+
+/* IO Panel SPI5 (WS2811) */
+&spi5 {
+    pinctrl-names = "default", "sleep";
+    pinctrl-0 = <&spi5_pins_mx>;
+    pinctrl-1 = <&spi5_sleep_pins_mx>;
+    status = "okay";
+    // Assuming clock source is PLL4Q @ 10MHz (div by 4)
+    spi-max-frequency = <2500000>;
+
+    // Copy DTS via #define
+    MINER_IO_LED_OLD
+
+};
