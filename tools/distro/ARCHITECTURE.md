@@ -54,8 +54,8 @@ The shared build, postbuild, and inject sequence:
 4. If requested, run the existing privileged ext4 injector through installation, postinstall scripts, VERSION updates, unmounting, and filesystem checks. Replace the plain rootfs and update the application manifest.
 5. For release and mfg, invoke `create_avb_image` in a private sibling `.distro-avb-*` directory after rootfs mutation. Mount the artifact parent read-write and selected keys read-only with networking disabled. Require regular nonempty, sector-aligned raw/body and a 512-byte tail without overlap in the 1 GiB partition. Reject legacy signer outputs. Validate both sidecars before replacing either; the pair is not atomic.
    `swurepackage.ValidAVBGeometry` shares size checks across SWU assembly and verification. Bounded subtraction prevents overflow and overlap before the footer.
-6. `RebuildAll` uses the same recreation core as standalone `Run`, but strictly verifies every staged archive. Rootfs preparation is shared per exact rootfs/body/tail input tuple: compress once, hash plain/compressed bytes and sidecars once, then copy independent files under each seed's original member names. Preserve component membership, scripts, updater, policy, modes, and unrelated members as opaque seed content. Replace exported FIP only where already present. Validate all manifest filename hashes, decompressed rootfs equality, AVB geometry, adjacency, offsets, and raw/zlib types.
-   Stage rebuilt outputs in one private directory inside the artifact root, retaining relative paths. This needs no writable parent and keeps staging on the artifact filesystem, including bind mounts. Deferred cleanup runs before checksum generation. Open new outputs exclusively; failure cleanup removes only batch-owned files, never a destination that appears after preflight. Publish only after the entire batch succeeds. Each rename is atomic, not folder-wide publication. Zero discovered SWUs produces none. Outer version changes never rename embedded members.
+6. `RebuildAll` uses the same recreation core as standalone `Run`/`Preview`, but strictly verifies every staged archive. Rootfs preparation is shared per exact rootfs/body/tail input tuple: compress once, hash plain/compressed bytes and sidecars once, then copy independent files using the supplied rootfs basename plus `.gz`, `.avb.body`, and `.avb.tail`. Preserve component membership, scripts, updater, policy, modes, and unrelated members as opaque seed content. Replace exported FIP only where already present, using its supplied basename. Validate all manifest filename hashes, decompressed rootfs equality, AVB geometry, adjacency, offsets, and raw/zlib types.
+   Stage rebuilt outputs in one private directory inside the artifact root, retaining relative paths. This needs no writable parent and keeps staging on the artifact filesystem, including bind mounts. Deferred cleanup runs before checksum generation. Open new outputs exclusively; failure cleanup removes only batch-owned files, never a destination that appears after preflight. Publish only after the entire batch succeeds. Each rename is atomic, not folder-wide publication. Zero discovered SWUs produces none.
    Trusted standalone `Run`/`Preview` retain targeted replacement semantics: unchanged seed members need no artifact authentication or manifest hash validation. FIP-only recreation does not stage rootfs. Neither path generates FIP bank policy or bootstrap hooks.
 7. Preserve all existing legacy `.avb`/`.avb.footer` files. Standalone folder/ZIP injection writes `sha.txt` once over the full artifact root after successful changed mutation; no-work ZIPs remain byte-identical. Postbuild passes `SkipChecksums=true`, then `FinalizeArtifactOutput` copies all configured local files and writes checksums exactly once, even with no local exports, before links/ZIP publication. Failed local export never rewrites checksums. No operation creates `.original` recovery copies.
 
@@ -98,7 +98,7 @@ P=1073741824, the signer publishes body bytes [O,E) and tail bytes [P-512,P).
 The body includes the hashtree, VBMeta, and tiny alignment padding; the tail
 contains 448 zero bytes and the standard 64-byte AVB footer.
 
-SWU assembly treats these as ordinary files. Plain rootfs and both sidecars are mandatory; it
+For rootfs replacement, SWU assembly requires plain rootfs and both sidecars; it
 checks matching basenames, regular nonempty inputs, sector-aligned raw/body,
 exactly 512 tail bytes, and no overlap in the fixed partition. It does not parse
 AVB binary fields or implement cryptography. Trusted matching inputs remain the
@@ -158,14 +158,25 @@ publication; unsigned minimal/base images can publish without SWUs.
 ### `swu-recreate`
 
 Recreates exactly one signed SWU using the supplied seed component layout.
-`swurepackage.Run` replaces rootfs/AVB only when rootfs exists in the seed and FIP
-only when FIP exists. Each present component requires a replacement option:
-`--rootfs FILE` and/or `--fip FILE`. Positional arguments and extra component inputs
-fail. A FIP-only seed requires no rootfs or AVB input. Payload
-names, version, hardware, selections, scripts, existing bootstrap, and unrelated
-members remain seed-owned; only replacement hashes and rootfs/AVB offsets are updated. No paired
-output, bootstrap-updater input, Docker, or AVB signer is involved. Preview stays
-local and read-only; final publication remains exclusive.
+`swurepackage.Run`/`Preview` select only explicitly supplied `--rootfs FILE` and/or
+`--fip FILE` replacements. At least one is required; each must exist in the seed.
+Other components need no replacement. Positional arguments and extra component
+inputs fail. FIP-only replacement needs no rootfs or AVB input, even when the seed
+contains rootfs. The replacement rootfs basename must end in `.rootfs.ext4` so
+the unchanged seed updater recognizes the resulting `*.rootfs.ext4.gz` member.
+Replaced members use the supplied basename: rootfs adds `.gz`,
+its sidecars add `.avb.body`/`.avb.tail`, and FIP uses its basename, which must
+match `fip-*.bin`. Name collisions fail. Only matching manifest entries' filenames,
+hashes, and required rootfs/AVB geometry change. Standalone rootfs replacement
+requires `--version VERSION` (forbidden without `--rootfs`) and updates software
+version in `sw-description`, preserving the existing `-release`/`-mfg`/`-dev` suffix.
+The option does not change VERSION inside ext4. FIP-only replacement preserves
+manifest version. Build/postbuild/inject pass an explicit VERSION override only
+for rootfs jobs; without an override they preserve existing manifest version.
+Hardware, selections, scripts, existing bootstrap, and unspecified members and
+manifest entries remain unchanged. No generic-file API,
+paired output, bootstrap-updater input, Docker, or AVB signer is involved.
+Preview stays local and read-only; final publication remains exclusive.
 Unchanged member hashes and file references are not checked, including scripts in
 `copy1`/`copy2`. Recreation neither validates nor repairs seed installability.
 Callers supply a suitable seed; stale hashes or absent files in installed
@@ -228,7 +239,7 @@ mount, extraction, and nested installation failures after archive selection.
 Physical boot, power-loss atomicity, production trust, and concurrent updates
 remain unqualified. See [bootstrap prerequisites](README.md#legacy-fip-bootstrap).
 
-Read-only preparation validates exact sidecar names, regular nonempty files, sector alignment, and nonoverlapping offsets. Execution compresses only plain ext4, copies body/tail unchanged, rewrites each A/B selection and hash, and signs the manifest. A sibling staging directory and exclusive hard-link publication prevent overwriting existing outputs. Seed metadata, scripts, unrelated members, and payload ordering are preserved.
+For rootfs replacement, read-only preparation validates exact sidecar names, regular nonempty files, sector alignment, and nonoverlapping offsets. Execution compresses only plain ext4, copies body/tail unchanged, rewrites matching replaced entries in each A/B selection, and signs the manifest. A sibling staging directory and exclusive hard-link publication prevent overwriting existing outputs. Seed metadata, scripts, unrelated members, and payload ordering are preserved.
 
 `--dry` uses `cpio -it` and `cpio -itv` without extraction to validate member paths, file types, and link counts, then streams hashes for the seed, trio, selected SWU credentials, and config. Both preview and execution reject symlinks, hardlinked files, and special files before extraction. Dry mode creates no files. Geometry checks do not authenticate AVB; manifest rewriting and credential usability remain execution-time checks. Reports contain credential fingerprints and must be kept private.
 

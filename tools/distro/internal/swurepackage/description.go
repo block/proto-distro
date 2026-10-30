@@ -206,10 +206,8 @@ func rewriteDescription(source, oldRootfsName string, payloads []imagePayload) (
 		}
 		close := tokens[open].mate
 		var records []imageRecord
-		var commas []configToken
 		for j := open + 1; j < close; {
 			if tokens[j].text == "," {
-				commas = append(commas, tokens[j])
 				j++
 				continue
 			}
@@ -272,43 +270,22 @@ func rewriteDescription(source, oldRootfsName string, payloads []imagePayload) (
 			}
 			pairs++
 		}
-		for _, p := range payloads[1:] {
-			root += ",\n                    " + metadataRecord(p, device)
+		if bodyIndex < 0 {
+			for _, p := range payloads[1:] {
+				root += ",\n                    " + metadataRecord(p, device)
+			}
 		}
-		// Rebuild separators explicitly, retaining all non-separator trivia.
-		var content strings.Builder
-		cursor, kept := tokens[open].end, 0
-		for j, r := range records {
-			prefix := source[cursor:tokens[r.start].start]
-			var separators []spanEdit
-			for _, c := range commas {
-				if c.start >= cursor && c.end <= tokens[r.start].start {
-					separators = append(separators, spanEdit{c.start - cursor, c.end - cursor, ""})
+		edits = append(edits, spanEdit{tokens[records[rootIndex].start].start, tokens[records[rootIndex].end].end, root})
+		if bodyIndex >= 0 {
+			if len(payloads) == 1 {
+				edits = append(edits, spanEdit{tokens[records[rootIndex].end].end, tokens[records[tailIndex].end].end, ""})
+			} else {
+				for j, index := range []int{bodyIndex, tailIndex} {
+					r := records[index]
+					edits = append(edits, spanEdit{tokens[r.start].start, tokens[r.end].end, metadataRecord(payloads[j+1], device)})
 				}
 			}
-			content.WriteString(applySpans(prefix, separators))
-			cursor = tokens[r.end].end
-			if j == bodyIndex || j == tailIndex {
-				continue
-			}
-			if kept > 0 {
-				content.WriteString(",\n")
-			}
-			kept++
-			if j == rootIndex {
-				content.WriteString(root)
-			} else {
-				content.WriteString(source[tokens[r.start].start:cursor])
-			}
 		}
-		var trailing []spanEdit
-		for _, c := range commas {
-			if c.start >= cursor {
-				trailing = append(trailing, spanEdit{c.start - cursor, c.end - cursor, ""})
-			}
-		}
-		content.WriteString(applySpans(source[cursor:tokens[close].start], trailing))
-		edits = append(edits, spanEdit{tokens[open].end, tokens[close].start, content.String()})
 		i = close
 	}
 	if matches == 0 {
@@ -318,4 +295,31 @@ func rewriteDescription(source, oldRootfsName string, payloads []imagePayload) (
 		return "", false, fmt.Errorf("partial owned AVB pairs across rootfs selections")
 	}
 	return applySpans(source, edits), pairs > 0, nil
+}
+
+// rewriteSoftwareVersion changes only software.version, retaining the seed variant.
+func rewriteSoftwareVersion(source, version string) (string, error) {
+	tokens, err := configTokens(source)
+	if err != nil {
+		return "", err
+	}
+	if len(tokens) < 3 || tokens[0].text != "software" || tokens[2].text != "{" {
+		return "", fmt.Errorf("SWU manifest requires a software group")
+	}
+	record, err := recordFields(tokens, 2)
+	if err != nil {
+		return "", err
+	}
+	old, err := fieldString(tokens, record, "version")
+	if err != nil {
+		return "", err
+	}
+	for _, suffix := range []string{"-release", "-mfg", "-dev"} {
+		if strings.HasSuffix(old, suffix) {
+			version = strings.TrimSuffix(version, suffix) + suffix
+			break
+		}
+	}
+	field := record.fields["version"]
+	return applySpans(source, []spanEdit{{tokens[field.value].start, tokens[field.valueEnd-1].end, strconv.Quote(version)}}), nil
 }

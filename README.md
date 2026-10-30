@@ -18,16 +18,15 @@
   </a>
 </p>
 
-**Proto Distro** is the base embedded Linux distro, based on Yocto, for managing the Proto Mining Rig control board. It manages all control-board-specific hardware and security features, and provides a platform for building the final release images flashed onto the control board. The distro is designed to be extended by downstream project [Proto Rig](https://github.com/block/miner-firmware), where mining-specific features and applications are added on top of the base distro provided here.
+**Proto Distro** is the Yocto-based Linux distro for Proto Rig control boards.
+It provides board support, security features, and flashable images.
+[Proto Rig](https://github.com/block/miner-firmware) adds mining applications.
 
 Supported control boards are C2 (`c2-evt`, `c2-p1`) and C3 (`c3-p1`).
 OTA updates use SWUpdate; the image recipes produce the update archives.
 Release disk image names retain their image, machine, and version identifiers.
 
-Application-owned behavior and retained platform interfaces are documented in
-[application/platform contracts](doc/application-contracts.md). Downstream
-ownership links, recipe attribution, and historical signing references remain
-useful provenance; a repository mention alone is not a runtime dependency.
+See [application/platform contracts](doc/application-contracts.md) for integration details.
 
 ## Getting Started
 
@@ -48,17 +47,8 @@ source ./bin/activate-hermit
 just build
 ```
 
-Yocto release/manufacturing builds produce `<image>.swu` without FIP and
-`<image>-with-fip.swu` with FIP, embedded `proto-swupdate`, and authenticated
-bootstrap hooks. These seeds need host rootfs/AVB finalization before installation.
-`just build` and `just shell` first build and stage the ARMv7 updater IPK.
-Yocto installs its precompiled executable through the `proto-swupdate` recipe
-in release/manufacturing images only; no postbuild package injection runs.
-
-Before low-level `distro build`, run `just build-proto-swupdate`. BitBake requires
-the staged `dist/proto-swupdate/yocto/proto-swupdate.ipk`; it never downloads or
-compiles a replacement updater. Staging preserves package bytes and sets mode
-`0644` so a builder user with a different UID can read the input.
+Build outputs are saved under `artifacts/`. The build stages the updater and
+finalizes images automatically.
 
 Build a specific machine, distro, or variant:
 
@@ -72,46 +62,27 @@ Open an interactive Yocto shell inside the builder container:
 just shell
 ```
 
-### Post-Build Workflows
+### Flash an Image
 
-Finalize an existing artifact folder or ZIP, retaining its version:
+Flashing overwrites selected partitions. Check the connected board or target IP first.
 
-```bash
-just postbuild --version 1.2.3 artifacts/miner-image-release-c3-p1-1.2.3.zip
-```
-
-Without `--version`, postbuild derives the version from `DISTRO_VERSION` or git.
-If it differs from the artifact version, postbuild copies and renames the
-artifacts before stamping rootfs VERSION and publishing updated latest links.
-
-`postbuild` regenerates AVB and rebuilds every discovered SWU, preserving each
-seed's components, embedded names, updater, and hooks. It then exports local
-files and publishes final checksums and the ZIP. `just postbuild` rebuilds the
-separate exported raw updater; it does not replace any embedded or installed
-updater. Rebuild the Yocto image with `just build` to update those executables.
-
-Shared [`distro inject`](tools/distro/README.md#distro-inject) remains available
-for downstream application packaging. This repository has no `just inject` entry
-point or automatic IPK injection configuration. The injector Docker image remains
-required for AVB signing.
-
-Flash the latest artifact to a connected device:
+For USB, connect the board in STM32 programming mode:
 
 ```bash
-just flash
+bin/scripts/cb_st_flasher artifacts/miner-image-latest/
 ```
 
-> **Note:** `just flash` uses native USB through libusb; STM32CubeProgrammer is no longer required. Source runs require the repository's Hermit Go/just toolchain, a native C compiler, `pkg-config`, and libusb development files. Released binaries require the libusb shared library at runtime. See [cb_st_flasher build and runtime prerequisites](tools/cb_st_flasher/README.md#build-and-runtime-prerequisites) for platform-specific setup.
-
-For a designated device already in fastboot mode, use the peer network tool:
+For a board already in network fastboot mode, replace the example IP:
 
 ```bash
-go_fastboot --target 192.168.1.100 flash --partition rootfs --no-reboot artifacts/miner-image-latest/
+bin/scripts/go_fastboot --target 192.168.1.100 flash artifacts/miner-image-latest/
 ```
 
-The Hermit wrapper is `bin/scripts/go_fastboot`; released `distro-tools` bundles include the standalone `go_fastboot` binary for Darwin/Linux amd64/arm64 alongside `distro`, `opkg-inject`, and `cb_st_flasher`. `just flash` remains the USB workflow, not a network command.
+Both commands also accept a build ZIP instead of a folder. With released tools,
+use `cb_st_flasher` or `go_fastboot` directly, without `bin/scripts/`.
 
-Both flashers use the [shared host profile](tools/flashimage/layout.go), ZIP safety checks, and capacity-aware AVB placement. For selected rootfs image `R`, fastboot uses exactly `R.avb.body` and `R.avb.tail`. Missing either companion warns and flashes the original image without either metadata file; malformed complete pairs fail before any erase or flash. USB flashing remains strict under `--verity`. See [go_fastboot](tools/go_fastboot/README.md) and [cb_st_flasher](tools/cb_st_flasher/README.md) for safety limits. Missing metadata does not disable verified boot.
+USB requires libusb. See [USB setup and options](tools/cb_st_flasher/README.md)
+or [network setup and options](tools/go_fastboot/README.md).
 
 ## Local SWU Installation
 
@@ -179,8 +150,9 @@ python3 -B -m unittest discover -s sources/meta-miner/tests
 
 ## License
 
-Licensed under the [Apache License, Version 2.0](LICENSE), except where otherwise
-noted. Third-party components retain their respective licenses.
+The first-party publication template is [Apache License, Version 2.0](LICENSE).
+Export generates root `LICENSE` and `python/LICENSE` from this template; neither
+file is kept in the internal checkout. Third-party components retain their licenses.
 
 Apache-2.0 is the default for first-party code. Existing upstream licenses and
 copyright notices remain in force, including the vendored Android AVB tool's MIT

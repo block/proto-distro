@@ -127,7 +127,7 @@ func TestRunRepackagesRootfsAndAVB(t *testing.T) {
 		{"changed-version", "0.0.3", 0x5a},
 	} {
 		t.Run(step.name, func(t *testing.T) {
-			root := oldRoot
+			root := "miner-image-release-c3-p1-" + step.version + ".rootfs.ext4"
 			raw := bytes.Repeat([]byte{step.fill}, 61952)
 			source := filepath.Join(workspace, "miner-image-release-c3-p1-"+step.version+".rootfs.ext4")
 			writeTest(t, source, raw)
@@ -137,7 +137,7 @@ func TestRunRepackagesRootfsAndAVB(t *testing.T) {
 			writeTest(t, bodyPath, body)
 			writeTest(t, tailPath, tail)
 			out := filepath.Join(workspace, step.name+"-"+step.version+".swu")
-			if err := Run(Options{OldSWU: archive, NewRootfs: source, AVBBody: bodyPath, AVBTail: tailPath, PrivateKey: privateKey, Passfile: passfile, Output: out}); err != nil {
+			if err := Run(Options{OldSWU: archive, NewRootfs: source, AVBBody: bodyPath, AVBTail: tailPath, SoftwareVersion: step.version, PrivateKey: privateKey, Passfile: passfile, Output: out}); err != nil {
 				t.Fatal(err)
 			}
 			archiveBytes := readTest(t, out)
@@ -148,6 +148,9 @@ func TestRunRepackagesRootfsAndAVB(t *testing.T) {
 			}
 			extracted := t.TempDir()
 			runTest(t, extracted, archiveBytes, "cpio", "-idm")
+			if !bytes.Equal(readTest(t, filepath.Join(extracted, "fip.bin")), fip) {
+				t.Fatal("unselected FIP bytes changed")
+			}
 			if !bytes.Equal(readTest(t, filepath.Join(extracted, "scripts/post.sh")), fip) {
 				t.Fatal("nested script bytes changed")
 			}
@@ -155,8 +158,14 @@ func TestRunRepackagesRootfsAndAVB(t *testing.T) {
 				t.Fatal("gzip contains more than plain rootfs")
 			}
 			updated := string(readTest(t, filepath.Join(extracted, "sw-description")))
+			if !strings.Contains(updated, `version = "`+step.version+`-release"`) {
+				t.Fatal("software version does not match replacement rootfs")
+			}
 			if !strings.Contains(updated, script) {
 				t.Fatal("unrelated script changed")
+			}
+			if !strings.Contains(updated, fipRecord) {
+				t.Fatal("unselected FIP record changed")
 			}
 			fields := imageFieldsTest(t, updated)
 			perSlot := 4
@@ -665,7 +674,7 @@ func fipFixture(t *testing.T) (Options, string) {
 		}
 	}
 	dir := t.TempDir()
-	opts := Options{OldSWU: filepath.Join(dir, "seed.swu"), NewRootfs: filepath.Join(dir, "image.rootfs.ext4"), NewFIP: filepath.Join(dir, "input.bin"), PrivateKey: filepath.Join(dir, "private.pem"), Passfile: filepath.Join(dir, "pass"), Output: filepath.Join(dir, "output.swu")}
+	opts := Options{OldSWU: filepath.Join(dir, "seed.swu"), NewRootfs: filepath.Join(dir, "image.rootfs.ext4"), NewFIP: filepath.Join(dir, "fip-new.bin"), PrivateKey: filepath.Join(dir, "private.pem"), Passfile: filepath.Join(dir, "pass"), Output: filepath.Join(dir, "output.swu")}
 	opts.AVBBody, opts.AVBTail = opts.NewRootfs+".avb.body", opts.NewRootfs+".avb.tail"
 	for _, path := range []string{opts.NewRootfs, opts.AVBBody, opts.AVBTail} {
 		writeTest(t, path, bytes.Repeat([]byte{byte(len(path))}, 512))
@@ -681,7 +690,7 @@ func fipFixture(t *testing.T) (Options, string) {
 
 func TestRequiredInputs(t *testing.T) {
 	original, _ := fipFixture(t)
-	for _, kind := range []string{"root-missing", "root-empty", "root-directory", "body-missing", "body-empty", "tail-missing", "tail-empty", "fip-empty", "fip-directory", "fip-symlink", "gzip", "wrong-body-name"} {
+	for _, kind := range []string{"root-missing", "root-empty", "root-directory", "body-missing", "body-empty", "tail-missing", "tail-empty", "fip-empty", "fip-directory", "fip-symlink", "fip-name", "gzip", "wrong-body-name"} {
 		t.Run(kind, func(t *testing.T) {
 			opts := original
 			empty := filepath.Join(t.TempDir(), "empty")
@@ -715,6 +724,9 @@ func TestRequiredInputs(t *testing.T) {
 				writeTest(t, opts.NewRootfs, runTest(t, "", readTest(t, original.NewRootfs), "gzip", "-c"))
 			case "wrong-body-name":
 				opts.AVBBody = original.AVBTail
+			case "fip-name":
+				opts.NewFIP = filepath.Join(t.TempDir(), "supplied-fip.bin")
+				writeTest(t, opts.NewFIP, []byte("firmware"))
 			}
 			if err := RebuildAll([]Options{opts}); err == nil {
 				t.Fatal("run accepted invalid input")
@@ -785,6 +797,12 @@ func TestRebuildAllPreservesSeedComponents(t *testing.T) {
 		want, err := Inspect(opts.OldSWU)
 		if err != nil {
 			t.Fatal(err)
+		}
+		if opts.NewRootfs != "" {
+			want.Rootfs = filepath.Base(opts.NewRootfs) + ".gz"
+		}
+		if opts.NewFIP != "" {
+			want.FIP = filepath.Base(opts.NewFIP)
 		}
 		for repeat := range 2 {
 			got, err := Inspect(opts.Output)
@@ -1009,6 +1027,10 @@ func TestPreviewRejectsComponentMismatch(t *testing.T) {
 				bad.NewFIP = "extra.bin"
 			} else {
 				bad.NewFIP = ""
+			}
+			if kind == "both" {
+				// Omitting one replacement is valid; omitting every replacement is not.
+				bad.NewRootfs, bad.AVBBody, bad.AVBTail, bad.NewFIP = "", "", "", ""
 			}
 			if _, _, err := Preview(bad); err == nil {
 				t.Fatal("preview accepted component mismatch", kind, component)

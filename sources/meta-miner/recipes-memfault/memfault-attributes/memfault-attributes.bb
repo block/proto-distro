@@ -1,4 +1,4 @@
-SUMMARY = "Bash script that runs on every boot to update memfault attributes."
+SUMMARY = "Optional boot-time Memfault attribution, disabled by default."
 DESCRIPTION = "${SUMMARY}"
 LICENSE = "CLOSED"
 LIC_FILES_CHKSUM = ""
@@ -7,7 +7,7 @@ inherit systemd
 
 FILESEXTRAPATHS:prepend:="${THISDIR}/files:"
 
-SYSTEMD_AUTO_ENABLE:${PN} = "enable"
+SYSTEMD_AUTO_ENABLE:${PN} = "disable"
 SYSTEMD_SERVICE:${PN} = "memfault-attributes.service"
 
 SRC_URI = "file://memfault-attributes.service \

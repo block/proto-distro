@@ -27,7 +27,7 @@ func postbuildCommand() *cli.Command {
 			},
 			&cli.StringFlag{
 				Name:  "version",
-				Usage: "Version to write into /usr/lib/os-release VERSION inside the rootfs (default: derived from git)",
+				Usage: "Version for rootfs /usr/lib/os-release VERSION and rebuilt SWU software.version (default: derived from git)",
 			},
 		},
 		Action: func(c *cli.Context) error {
@@ -101,7 +101,7 @@ func runPostbuild(cfg *config.Config, configPath, inputPath, variant, injectVers
 		}
 	}
 
-	// Outer artifact versions can change while embedded seed member names stay fixed.
+	// Rename exported files first; shared rebuilding updates replaced SWU members and software.version.
 	renamed, err := renameArtifactToVersion(cfg, variant, folderPath, injectVersion)
 	if err != nil {
 		return err

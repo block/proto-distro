@@ -2,12 +2,11 @@ version: 2
 
 project_name: tools
 
-# LICENSE/README are already included by GoReleaser's defaults. Keep those
-# patterns when adding the maintained notices for compiled dependencies.
+# Keep default README/changelog patterns and ship the publication license template.
 archives:
   - files:
-      - license*
-      - LICENSE*
+      - src: LICENSE
+        strip_parent: true
       - readme*
       - README*
       - changelog*

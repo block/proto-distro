@@ -315,7 +315,7 @@ func TestProcessPostBuildSignsBeforePublication(t *testing.T) {
 							t.Fatalf("SWU %s differs: %v", part, err)
 						}
 					}
-					fip, err := os.ReadFile(filepath.Join(extracted, "fip-ota.bin"))
+					fip, err := os.ReadFile(filepath.Join(extracted, "fip-stm32mp131f-c3p1-optee.bin"))
 					if suffix == ".swu" && !os.IsNotExist(err) || suffix != ".swu" && (err != nil || string(fip) != "exact deployed FIP") {
 						t.Fatalf("FIP membership: %v", err)
 					}

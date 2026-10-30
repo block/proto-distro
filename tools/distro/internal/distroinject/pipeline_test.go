@@ -552,8 +552,8 @@ func assertPipelineArchive(t *testing.T, archive, publicKey, embeddedRoot string
 		}
 	}
 	if fip {
-		wantNames["fip-custom.bin"] = true
-		if readTestFile(t, filepath.Join(unpacked, "fip-custom.bin")) != fipBytes {
+		wantNames["fip-board-optee.bin"] = true
+		if readTestFile(t, filepath.Join(unpacked, "fip-board-optee.bin")) != fipBytes {
 			t.Fatal("SWU FIP differs from exported FIP")
 		}
 	}
@@ -664,7 +664,11 @@ func TestSWUDiscoveredSeedsRebuiltInPlace(t *testing.T) {
 					if files[name] == "" || files[name] == archives[name] {
 						t.Fatalf("seed %s not rebuilt", name)
 					}
-					assertPipelineArchive(t, files[name], publicKey, seed.root, seed.fip, files, root, files[fipPath])
+					outputRoot := ""
+					if seed.root != "" {
+						outputRoot = root
+					}
+					assertPipelineArchive(t, files[name], publicKey, outputRoot, seed.fip, files, root, files[fipPath])
 				}
 				if files["proto-swupdate"] != initial["proto-swupdate"] {
 					t.Fatal("shared injection exported configured local updater")
@@ -682,7 +686,7 @@ func TestSWUDiscoveredSeedsRebuiltInPlace(t *testing.T) {
 				if iteration == 0 {
 					writeTestFile(t, localUpdater, "changed local updater")
 					files[fipPath] = "new deployed FIP"
-					// Outer artifact versions change independently of embedded names.
+					// Rebuilt payload names follow the supplied outer artifact basename.
 					nextRoot := "miner-image-release-c3-p1-3.rootfs.ext4"
 					for _, suffix := range []string{"", ".avb.body", ".avb.tail"} {
 						files[nextRoot+suffix] = files[root+suffix]
@@ -1005,6 +1009,49 @@ func TestChecksumFinalizationUsesFullArtifactRoot(t *testing.T) {
 				if _, ok := files["nested/sha.txt"]; ok {
 					t.Fatal("checksums written below artifact root")
 				}
+			})
+		}
+	}
+}
+
+func TestVersionOverrideWhitespaceKeepsRootfsAndManifestConsistent(t *testing.T) {
+	privateKey, passfile, publicKey := pipelineKeys(t)
+	for _, zipped := range []bool{false, true} {
+		for _, override := range []string{" 2.0.0 ", " \t "} {
+			t.Run(fmt.Sprintf("zip=%t/version=%q", zipped, override), func(t *testing.T) {
+				testDocker(t)
+				cfg, configPath := testConfig(t)
+				root := "miner-image-release-c3-p1-1.rootfs.ext4"
+				plain := alignedTestData("VERSION=seed\n")
+				input := testInput(t, map[string]string{
+					root: plain, "image.swu": pipelineSeed(t, root, false),
+				}, zipped)
+				ipk := filepath.Join(t.TempDir(), "marker_1.0.0_all.ipk")
+				writeTestFile(t, ipk, "package bytes\n")
+				params := Params{Config: cfg, ConfigPath: configPath, InputPath: input,
+					IPKPaths: []string{ipk}, Version: override,
+					PrivateKeyOverride: privateKey, PassfileOverride: passfile}
+				if _, err := RunWithConfig(context.Background(), params); err != nil {
+					t.Fatal(err)
+				}
+				files := testFiles(t, input, zipped)
+				want := plain + "package bytes\n"
+				version := strings.TrimSpace(override)
+				manifestVersion := "seed"
+				if version != "" {
+					want += "VERSION=" + version + "\n"
+					manifestVersion = version
+				}
+				if files[root] != alignedTestData(want) {
+					t.Fatal("rootfs did not use normalized version override")
+				}
+				extracted := t.TempDir()
+				runPipelineCommand(t, extracted, files["image.swu"], "cpio", "-idm")
+				description := readTestFile(t, filepath.Join(extracted, "sw-description"))
+				if !strings.Contains(description, `version = "`+manifestVersion+`"`) {
+					t.Fatalf("manifest version differs from rootfs override: %s", description)
+				}
+				assertPipelineArchive(t, files["image.swu"], publicKey, root, false, files, root, "")
 			})
 		}
 	}

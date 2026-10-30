@@ -28,7 +28,7 @@ func verify(archive string, components Components, expected map[string]string, e
 	}
 	actual, err := discoverComponents(names)
 	if err != nil || actual != components {
-		return fmt.Errorf("SWU component membership differs from seed")
+		return fmt.Errorf("SWU component membership differs from expected")
 	}
 	for _, name := range []string{"sw-description", "sw-description.sig"} {
 		if _, err := regularFile(filepath.Join(directory, name)); err != nil {
@@ -37,7 +37,7 @@ func verify(archive string, components Components, expected map[string]string, e
 	}
 	hashes := make(map[string]string)
 	offsets := make(map[string]int64)
-	if components.Rootfs != "" {
+	if components.Rootfs != "" && expected != nil {
 		rootfs := strings.TrimSuffix(components.Rootfs, ".gz")
 		for _, name := range []string{components.Rootfs, rootfs + ".avb.body", rootfs + ".avb.tail"} {
 			if _, err := regularFile(filepath.Join(directory, name)); err != nil {
@@ -103,7 +103,7 @@ func verify(archive string, components Components, expected map[string]string, e
 		if err != nil {
 			return err
 		}
-		if hash != expectedFIPHash {
+		if expectedFIPHash != "" && hash != expectedFIPHash {
 			return fmt.Errorf("SWU FIP differs from replacement")
 		}
 		hashes[components.FIP] = hash
@@ -115,7 +115,7 @@ func verify(archive string, components Components, expected map[string]string, e
 		return err
 	}
 	source := string(description)
-	if components.Rootfs != "" {
+	if components.Rootfs != "" && expected != nil {
 		_, owned, err := rewriteDescription(source, components.Rootfs, []imagePayload{{name: components.Rootfs}})
 		if err != nil {
 			return err

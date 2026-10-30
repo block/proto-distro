@@ -16,16 +16,20 @@ func swuRecreateCommand() *cli.Command {
 	return &cli.Command{
 		Name:  "swu-recreate",
 		Usage: "Replace rootfs and/or FIP components present in a trusted seed SWU",
-		Description: "Supply --rootfs with matching adjacent AVB body/tail when seed contains rootfs; supply --fip when seed contains FIP. " +
-			"Preserves seed payload names, version, hardware, selections, bootstrap, scripts, and unrelated members. " +
-			"Replacement inputs must match seed components. No AVB private key is needed; AVB authenticity is not proved. " +
+		Description: "Supply --rootfs with matching adjacent AVB body/tail, --fip, or both; each supplied component must exist in the seed. " +
+			"Replaced members use supplied basenames (rootfs adds .gz; AVB sidecars retain their suffixes; FIP must match fip-*.bin). Name collisions fail. " +
+			"Updates replaced entries' filenames, hashes, and required AVB geometry; --rootfs requires --version with the plain software VERSION and preserves the existing variant suffix. " +
+			"--version changes sw-description, not VERSION inside ext4; it is forbidden without --rootfs. FIP-only replacement preserves version. " +
+			"Unspecified members and manifest entries remain unchanged. " +
+			"At least one replacement is required. No generic-file replacement API exists. No AVB private key is needed; AVB authenticity is not proved. " +
 			"Dry mode is strictly local and read-only; it needs cpio for listing, not Docker, gzip, or OpenSSL. " +
 			"Preview checks selection and file geometry, not manifest rewriting or signing-credential usability. " +
 			"Reports include signing-credential fingerprints; keep reports private.",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "swu", Required: true, Usage: "trusted seed SWU archive"},
-			&cli.StringFlag{Name: "rootfs", Usage: "replacement plain ROOTFS.ext4 with adjacent AVB body/tail (required exactly when seed contains rootfs)"},
-			&cli.StringFlag{Name: "fip", Usage: "replacement FIP binary (required exactly when seed contains FIP)"},
+			&cli.StringFlag{Name: "rootfs", Usage: "replace seed rootfs with plain *.rootfs.ext4 and required adjacent AVB body/tail; basename must end .rootfs.ext4 for unchanged seed updater compatibility; other components remain unchanged"},
+			&cli.StringFlag{Name: "version", Usage: "software VERSION for rootfs replacement (required exactly with --rootfs); preserves existing variant suffix"},
+			&cli.StringFlag{Name: "fip", Usage: "replace seed FIP with fip-*.bin using its basename; other components remain unchanged"},
 			&cli.StringFlag{Name: "output", Aliases: []string{"o"}, Usage: "new output SWU (default: <seed>_recreated.swu)"},
 			&cli.StringFlag{Name: "swu-key-file", Usage: "RSA private key file for SWU signing (default: from config)"},
 			&cli.StringFlag{Name: "swu-key-pass", Usage: "key passphrase file for SWU signing (default: from config)"},
@@ -39,8 +43,15 @@ func swuRecreateCommand() *cli.Command {
 				return fmt.Errorf("positional arguments are unsupported; use --rootfs and --fip")
 			}
 			rootfs := c.String("rootfs")
-			if c.IsSet("rootfs") && !strings.HasSuffix(rootfs, ".ext4") {
-				return fmt.Errorf("--rootfs requires a nonempty plain ROOTFS.ext4 file path")
+			if c.IsSet("rootfs") && !strings.HasSuffix(rootfs, ".rootfs.ext4") {
+				return fmt.Errorf("--rootfs requires a nonempty plain *.rootfs.ext4 file path")
+			}
+			version := c.String("version")
+			if (rootfs != "") != c.IsSet("version") || (rootfs != "" && version == "") {
+				return fmt.Errorf("--version is required exactly with --rootfs")
+			}
+			if strings.TrimSpace(version) != version || strings.ContainsAny(version, "\r\n") {
+				return fmt.Errorf("--version must contain a nonempty version without surrounding whitespace or newlines")
 			}
 			var err error
 			if rootfs != "" {
@@ -69,7 +80,7 @@ func swuRecreateCommand() *cli.Command {
 				return err
 			}
 			opts := swurepackage.Options{
-				OldSWU: seed, NewRootfs: rootfs,
+				OldSWU: seed, NewRootfs: rootfs, SoftwareVersion: version,
 				NewFIP:     c.String("fip"),
 				PrivateKey: keys.PrivateKey, Passfile: keys.Passfile, KeyDir: keys.KeyDir,
 				Output: output,

@@ -120,7 +120,7 @@ func TestRunPostbuildVersionCopy(t *testing.T) {
 			entry := func(device string) string {
 				return fmt.Sprintf("{ filename = %q; sha256 = %q; device = %q; type = %q; compressed = %q; installed-directly = true; }", root+".gz", strings.Repeat("0", 64), device, "raw", "zlib")
 			}
-			commandWrite(t, filepath.Join(payload, "sw-description"), []byte("software = { stable = { copy1 = { images = ("+entry("/dev/mmcblk0p7")+"); }; copy2 = { images = ("+entry("/dev/mmcblk0p8")+"); }; }; };\n"))
+			commandWrite(t, filepath.Join(payload, "sw-description"), []byte("software = { version = \"1.0.0-release\"; stable = { copy1 = { images = ("+entry("/dev/mmcblk0p7")+"); }; copy2 = { images = ("+entry("/dev/mmcblk0p8")+"); }; }; };\n"))
 			commandRun(t, payload, "", "openssl", "dgst", "-sha256", "-sign", filepath.Join(dir, cfg.Signing.PrivateKey), "-out", "sw-description.sig", "sw-description")
 			if err := os.Mkdir(filepath.Join(oldFolder, "fip"), 0755); err != nil {
 				t.Fatal(err)
@@ -156,7 +156,12 @@ func TestRunPostbuildVersionCopy(t *testing.T) {
 			if fail {
 				t.Setenv("DISTRO_TEST_SIGNER_FAIL", "1")
 			}
-			err = runPostbuild(cfg, configPath, oldFolder, "release", "2.0.0")
+			configuration, err := yaml.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			commandWrite(t, configPath, configuration)
+			_, err = artifactCommand(postbuildCommand(), configPath, "--variant", "release", "--version", "2.0.0", oldFolder)
 			for name, want := range before {
 				if got := commandRead(t, filepath.Join(oldFolder, name)); !bytes.Equal(got, want) {
 					t.Errorf("old artifact %s changed", name)
@@ -220,7 +225,7 @@ func TestRunPostbuildVersionCopy(t *testing.T) {
 
 			extracted := t.TempDir()
 			commandRun(t, extracted, string(commandRead(t, filepath.Join(newFolder, newName+".swu"))), "cpio", "-idm")
-			compressed := commandRead(t, filepath.Join(extracted, root+".gz"))
+			compressed := commandRead(t, filepath.Join(extracted, newRoot+".gz"))
 			reader, err := gzip.NewReader(bytes.NewReader(compressed))
 			if err != nil {
 				t.Fatal(err)
@@ -235,9 +240,9 @@ func TestRunPostbuildVersionCopy(t *testing.T) {
 			if !bytes.Equal(unpacked, wantRoot) {
 				t.Fatal("SWU gzip differs from plain rootfs")
 			}
-			assertAVBPair(t, extracted, root)
+			assertAVBPair(t, extracted, newRoot)
 			description := string(commandRead(t, filepath.Join(extracted, "sw-description")))
-			if strings.Count(description, root+".gz") != 2 || strings.Contains(description, newRoot+".gz") || strings.Count(description, fmt.Sprintf("%x", sha256.Sum256(compressed))) != 2 {
+			if strings.Count(description, newRoot+".gz") != 2 || strings.Contains(description, root+".gz") || strings.Count(description, fmt.Sprintf("%x", sha256.Sum256(compressed))) != 2 {
 				t.Fatalf("A/B references or hashes disagree: %s", description)
 			}
 			for _, name := range []string{newName + ".swu", newName + "-with-fip.swu", "extra.swu"} {
@@ -245,12 +250,15 @@ func TestRunPostbuildVersionCopy(t *testing.T) {
 				commandRun(t, unpacked, string(commandRead(t, filepath.Join(newFolder, name))), "cpio", "-idm")
 				commandRun(t, unpacked, "", "openssl", "dgst", "-sha256", "-verify", filepath.Join(dir, "public.pem"), "-signature", "sw-description.sig", "sw-description")
 				assertCommandOpaqueMembers(t, unpacked, name == newName+"-with-fip.swu")
-				if got := commandRun(t, unpacked, "", "gzip", "-dc", root+".gz"); !bytes.Equal(got, wantRoot) {
+				if got := commandRun(t, unpacked, "", "gzip", "-dc", newRoot+".gz"); !bytes.Equal(got, wantRoot) {
 					t.Fatal("rebuilt seed rootfs differs")
 				}
-				assertAVBPair(t, unpacked, root)
+				assertAVBPair(t, unpacked, newRoot)
 				description := string(commandRead(t, filepath.Join(unpacked, "sw-description")))
-				for _, member := range []string{root + ".gz", root + ".avb.body", root + ".avb.tail"} {
+				if !strings.Contains(description, `version = "2.0.0-release"`) || strings.Contains(description, `version = "1.0.0-release"`) {
+					t.Fatalf("postbuild did not update software.version in %s: %s", name, description)
+				}
+				for _, member := range []string{newRoot + ".gz", newRoot + ".avb.body", newRoot + ".avb.tail"} {
 					if !strings.Contains(description, fmt.Sprintf("%x", sha256.Sum256(commandRead(t, filepath.Join(unpacked, member))))) {
 						t.Fatalf("rebuilt seed missing hash for %s", member)
 					}
@@ -354,13 +362,13 @@ func TestRunPostbuildVersionCopy(t *testing.T) {
 				unpacked := t.TempDir()
 				commandRun(t, unpacked, string(commandRead(t, filepath.Join(newFolder, name))), "cpio", "-idm")
 				commandRun(t, unpacked, "", "openssl", "dgst", "-sha256", "-verify", filepath.Join(dir, "public.pem"), "-signature", "sw-description.sig", "sw-description")
-				if got := commandRun(t, unpacked, "", "gzip", "-dc", root+".gz"); !bytes.Equal(got, commandRead(t, filepath.Join(newFolder, newRoot))) {
+				if got := commandRun(t, unpacked, "", "gzip", "-dc", newRoot+".gz"); !bytes.Equal(got, commandRead(t, filepath.Join(newFolder, newRoot))) {
 					t.Fatal("repeated postbuild rootfs differs")
 				}
-				assertAVBPair(t, unpacked, root)
+				assertAVBPair(t, unpacked, newRoot)
 				assertCommandOpaqueMembers(t, unpacked, name == newName+"-with-fip.swu")
 				description := string(commandRead(t, filepath.Join(unpacked, "sw-description")))
-				for _, member := range []string{root + ".gz", root + ".avb.body", root + ".avb.tail"} {
+				for _, member := range []string{newRoot + ".gz", newRoot + ".avb.body", newRoot + ".avb.tail"} {
 					if !strings.Contains(description, fmt.Sprintf("%x", sha256.Sum256(commandRead(t, filepath.Join(unpacked, member))))) {
 						t.Fatalf("repeated postbuild missing hash for %s", member)
 					}

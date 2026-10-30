@@ -38,6 +38,7 @@ type Options struct {
 // ZIP inputs are replaced only on success. Folder inputs are modified in-place
 // without recovery copies or transactional rollback.
 func Run(ctx context.Context, opts Options) (string, error) {
+	opts.Version = strings.TrimSpace(opts.Version)
 	inputPath, err := filepath.Abs(opts.InputPath)
 	if err != nil {
 		return "", fmt.Errorf("resolving input path: %w", err)
@@ -162,6 +163,7 @@ func injectIntoDir(ctx context.Context, dir string, opts Options) (bool, error) 
 			}
 			if components[i].Rootfs != "" {
 				batch[i].NewRootfs, batch[i].AVBBody, batch[i].AVBTail = rootfs, body, tail
+				batch[i].SoftwareVersion = opts.Version
 			}
 			if components[i].FIP != "" {
 				batch[i].NewFIP = fip
