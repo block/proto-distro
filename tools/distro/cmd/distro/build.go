@@ -1,8 +1,8 @@
 package main
 
 import (
-	"proto-distro/tools/distro/internal/builder"
 	"github.com/urfave/cli/v2"
+	"proto-distro/tools/distro/internal/builder"
 )
 
 func buildCommand() *cli.Command {
@@ -29,6 +29,11 @@ func buildCommand() *cli.Command {
 				Name:  "postbuild-inject",
 				Usage: "Run package injection during post-build and set VERSION in os-release to the given value",
 			},
+			&cli.StringFlag{
+				Name:    "output-dir",
+				Aliases: []string{"o"},
+				Usage:   "Output parent directory for artifacts, ZIP, and latest links (default: configured artifact root)",
+			},
 		},
 		Action: func(c *cli.Context) error {
 			return builder.Run(c.Context, builder.Options{
@@ -38,6 +43,7 @@ func buildCommand() *cli.Command {
 				Variant:       c.String("variant"),
 				Command:       "build",
 				InjectVersion: c.String("postbuild-inject"),
+				OutputDir:     c.String("output-dir"),
 			})
 		},
 	}

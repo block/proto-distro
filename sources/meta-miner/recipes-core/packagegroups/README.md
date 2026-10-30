@@ -15,6 +15,14 @@ Essential packages, installed on all images (release, mfg). When this package is
 ### packagegroup-proto-memfault
 Packages to enable memfault features/functionality.
 
+The optional `memfault-attributes.service` remains installed but is disabled by
+default. It does not submit custom distro or MAC attributes at boot. This does
+not disable `memfaultd` or change its data-collection settings. An explicit
+package installation applies the disabled preset; manual enablement is opt-in.
+
+The DHCP templates place `UseHostname=true` under `[DHCPv4]`. Existing persistent
+network configuration is not automatically migrated by this template change.
+
 ## Miner-Image specific packages
 
 ### packagegroup-proto-mfg

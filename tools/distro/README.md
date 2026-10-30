@@ -32,7 +32,8 @@ distro build --postbuild-inject 1.2.3             # Stamp os-release VERSION dur
 Build, postbuild, and injection overwrite source artifacts without creating
 `.original` recovery copies. Folder updates are not transactional; keep a separate
 copy before processing if rollback is required. ZIP inputs are replaced only
-after processing succeeds.
+after processing succeeds. `distro postbuild --output-dir DIR` preserves its input
+and writes a separate artifact under the selected parent directory.
 
 In proto-distro, prefer root `just build` or `just shell`: both first build and
 stage the precompiled updater IPK consumed by Yocto. Direct `distro build` needs
@@ -83,9 +84,11 @@ The root artifact configuration explicitly exports both seeds.
 Build/postbuild/inject rebuild every recursively discovered `.swu` at its
 original relative path, including arbitrary names and nested same-basename
 archives. No archive is synthesized. Each seed keeps its component membership,
-embedded names, updater, scripts, modes, and unrelated members. Only existing
-rootfs/FIP payloads, adjacent rootfs AVB records, their manifest records, and
-signatures change. Embedded names stay fixed when the outer version changes.
+updater, scripts, modes, and unrelated members. Replaced payloads use the supplied
+basenames: rootfs adds `.gz`, and its sidecars add `.avb.body`/`.avb.tail`; FIP uses
+its basename, which must match `fip-*.bin`. Only replaced entries' filenames,
+hashes, required rootfs/AVB geometry, software version on rootfs replacement,
+and signatures change.
 Every staged result passes generic manifest hash and rootfs/AVB validation before
 any source archive is replaced. A later failure leaves all source SWUs untouched;
 each final rename is atomic, not the folder-wide publication.
@@ -133,6 +136,14 @@ compatibility.
 - `--distro`, `-d` — Distro name (default from config)
 - `--variant`, `-t` — Image variant: release, mfg (default from config)
 - `--postbuild-inject` — Run package injection during post-build and stamp `/usr/lib/os-release` `VERSION`
+- `--output-dir`, `-o` — Parent directory for the versioned artifact folder, ZIP, and latest links (default: `artifacts.root_dir`)
+
+Explicit output paths resolve relative to the working directory. Existing
+versioned folders or ZIPs are rejected rather than overwritten. This changes
+only exported artifacts, not the Yocto workspace, Docker volume, injection
+cache, or signing/local-file paths. Without the option, build behavior is unchanged.
+Build export checks nested directory symlink targets before creating output,
+rejecting source overlap and directory cycles while allowing safe aliases.
 
 ### `distro shell`
 
@@ -177,6 +188,8 @@ Inject packages into a distro ZIP or folder, optionally update VERSION, and rege
 distro inject INPUT_PATH [IPK_FILES_OR_DIRS...]
 distro inject --version 1.2.3 miner-image-release.zip ./packages/
 distro inject artifact-folder/  # Release/manufacturing AVB/SWU regeneration without rootfs mutation
+distro inject -o dist artifact-folder/ ./packages/
+distro inject --output-dir dist miner-image-release.zip ./packages/
 ```
 
 Standalone policy follows the inner `miner-image-<release|mfg>-<machine>-` rootfs
@@ -185,6 +198,17 @@ and `defaults.variant` do not select keys. Existing mfg sidecars are valid input
 Generic unsigned images retain injection support only without SWUs.
 Build/postbuild metadata is explicit and must agree with canonical rootfs names.
 Injected package names and versions are recorded in `application_manifest.txt`.
+Version overrides trim surrounding whitespace before rootfs mutation and SWU
+rewriting. A whitespace-only override leaves both existing versions unchanged.
+
+`--output-dir DIR` (`-o DIR`) selects an output parent relative to the working
+directory and preserves the input. Folder input produces `DIR/<folder-name>/`;
+ZIP input produces `DIR/<archive-name>.zip`. Internal filenames are unchanged,
+and injection does not publish latest links. Existing destinations and output
+inside the source folder are rejected, including symlink aliases. Failed folder
+processing may leave a partial copy. Explicit folder destinations are reserved
+exclusively; explicit ZIP publication fails if another writer creates the
+destination. Omit the option to retain the existing in-place behavior.
 
 #### Package selection and offline installation
 
@@ -249,45 +273,78 @@ select injected packages, or export files. `artifacts.files`,
 
 ```bash
 distro postbuild --variant release --version 1.2.3 artifacts/miner-image-release-c3-p1-1.2.2
+distro postbuild -o dist --variant release --version 1.2.3 artifacts/miner-image-release-c3-p1-1.2.2.zip
 ```
 
 Version changes copy the old folder before renaming and processing. Build,
 postbuild, and inject all use the same post-mutation signer. Plain ext4 remains
 available for reinjection; `opkg-inject` and the container injector never sign AVB.
+`--version` updates `/usr/lib/os-release` VERSION and `software.version` in every
+rootfs-bearing SWU, preserving its existing variant suffix. Rebuilt rootfs/AVB and
+FIP members use the exported replacement basenames, including with-FIP companions.
+Unrelated payload bytes and manifest entries stay unchanged. Without `--version`,
+postbuild derives the version from Git.
+
+`--output-dir DIR` (`-o DIR`) selects a parent directory relative to the current
+working directory, not the config file. It creates
+`DIR/<artifact-name>/`, `DIR/<artifact-name>.zip`, and the usual
+`<target>-<machine>-latest`, `miner-image-latest`, and `miner-image-latest.zip`
+links there. Directory and ZIP inputs remain unchanged, including when the
+version does not change. Package caches, local files, and signing keys still
+use the original config paths. Omitting the option keeps the existing behavior.
+
+The selected parent may contain unrelated artifacts and existing latest links.
+An existing destination folder or ZIP is an error; output inside the input
+directory is rejected, including symlink aliases. Output folders are reserved
+exclusively before copying or extraction. Failed processing may leave a
+partial destination folder, but preparation or injection failures do not publish
+a ZIP or latest links. Choose another destination or explicitly remove the
+partial folder before retrying.
 
 ### `distro swu-recreate`
 
-Recreate exactly one signed SWU from a trusted seed. The seed determines which
-components are replaced; this command does not add or remove rootfs or FIP.
-Supply `--rootfs FILE` with matching AVB body/tail when the seed contains rootfs.
-Supply `--fip FILE` when the seed contains FIP. FIP-only seeds need no rootfs
-option. Positional arguments, missing replacements, and extra component inputs fail.
+Recreate exactly one signed SWU from a trusted seed. Supply `--rootfs FILE`,
+`--fip FILE`, or both to replace only those components. Each supplied component
+must exist in the seed; other components need no replacement and remain unchanged.
+Rootfs replacement requires `--version VERSION` and matching adjacent AVB body/tail
+files. `--version` is forbidden without `--rootfs`; use the plain software version,
+without the variant suffix. Recreation preserves the existing `-release`, `-mfg`,
+or `-dev` suffix in `sw-description`. This does not change VERSION inside the ext4.
+Positional arguments, no replacements, and extra component inputs fail.
 No AVB private key or Docker is needed; supplied AVB is not regenerated or authenticated.
 Recreation ignores `artifacts.local_files`, including local `proto-swupdate` builds.
 It preserves the seed updater, bootstrap hooks, and unrelated payload bytes; only
-replacement payloads, rootfs AVB metadata, replacement manifest records, and signature change.
+replacement payloads, rootfs AVB metadata, replacement manifest records, signature,
+and software version on rootfs replacement change.
 
 ```bash
 # Rootfs-only seed
-distro swu-recreate --swu rootfs-seed.swu --output rebuilt.swu --rootfs rootfs.ext4
+distro swu-recreate --swu rootfs-seed.swu --output rebuilt.swu --rootfs new.rootfs.ext4 --version 1.2.3
 # Rootfs and FIP seed
-distro swu-recreate --swu paired-seed.swu --fip supplied-fip.bin --rootfs rootfs.ext4
-# FIP-only seed
-distro swu-recreate --swu fip-seed.swu --fip supplied-fip.bin
-distro swu-recreate --dry --swu rootfs-seed.swu --rootfs rootfs.ext4
-just swu-recreate --swu rootfs-seed.swu --rootfs rootfs.ext4
+distro swu-recreate --swu paired-seed.swu --fip fip-new.bin --rootfs new.rootfs.ext4 --version 1.2.3
+# Replace only FIP in a seed containing rootfs and FIP
+distro swu-recreate --swu paired-seed.swu --fip fip-new.bin
+distro swu-recreate --dry --swu rootfs-seed.swu --rootfs new.rootfs.ext4 --version 1.2.3
+just swu-recreate --swu rootfs-seed.swu --rootfs new.rootfs.ext4 --version 1.2.3
 ```
 
-For rootfs replacement, exact adjacent `rootfs.ext4.avb.body` and
-`rootfs.ext4.avb.tail` files are required. Compressed rootfs, monolithic `.avb`,
+For rootfs replacement, the supplied basename must end in `.rootfs.ext4` so the
+unchanged seed updater recognizes the resulting `*.rootfs.ext4.gz` member.
+Exact adjacent `new.rootfs.ext4.avb.body` and
+`new.rootfs.ext4.avb.tail` files are required. Compressed rootfs, monolithic `.avb`,
 missing metadata, and invalid geometry fail. Geometry cannot detect stale or
 unauthenticated metadata; supply a trusted matching trio.
 Seed archives may contain only regular files and directories. Symlinks, hardlinked
 files, and special files fail before extraction, including during dry inspection.
-Seed payload names, version, hardware identifiers, selections, scripts, and
-unrelated members remain intact. Existing bootstrap updater/hooks remain seed
-content; there is no standalone `--bootstrap-updater` input. Replacement payload
-hashes and rootfs/AVB offsets are updated before signing.
+Replaced archive members and matching `sw-description` filenames use the supplied
+basename: `new.rootfs.ext4.gz`, `new.rootfs.ext4.avb.body`, `new.rootfs.ext4.avb.tail`, and the
+FIP basename, which must match `fip-*.bin`. Name collisions fail. Rootfs replacement
+updates the software version in `sw-description`; FIP-only replacement preserves it.
+Hardware identifiers, selections, scripts, and unspecified members and manifest
+entries remain unchanged.
+Existing bootstrap updater/hooks remain seed content; there is no standalone
+`--bootstrap-updater` input or generic-file replacement API. Only replaced entries'
+filenames, hashes, required rootfs/AVB geometry, and rootfs software version are updated before signing.
 Recreation does not authenticate unchanged companion files or check their manifest
 hashes, including records in `copy1`/`copy2`. Bootstrap hooks, updater bytes, and
 other seed members pass through unchanged, including existing stale hashes or
@@ -416,7 +473,7 @@ The following source flags exist only when using the example `fetch.yaml` above:
 The remaining flags are available independently of the configured source names:
 
 - `--pattern`, `-p` — file pattern to match (overrides default per-source pattern, e.g. `*.swu`)
-- `--output-dir`, `-o` — output directory override (when omitted, defaults to `artifacts.root_dir` and stores files under `<source>-<resolved-tag>/`)
+- `--output-dir`, `-o` — Parent directory for downloaded artifact files, relative to the working directory (when omitted or empty, defaults to `artifacts.root_dir` and stores files under `<source>-<resolved-tag>/`).
 - `--json` — output a simplified JSON object mapping each source name to its downloaded or skipped file paths
 
 ### `injector`

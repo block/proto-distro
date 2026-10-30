@@ -28,18 +28,18 @@ SRC_URI += " \
             file://optee-ta-src \
 "
 
-DEPENDS += "mbedtls optee-client python3-pycryptodomex-native python3-cryptography-native"
+DEPENDS += "mbedtls optee-client"
 
 inherit python3native
 
-ST_OPTEE_DEBUG_LOG_LEVEL = "${@bb.utils.contains('TARGET', 'miner-image-release', '1', '2', d)}"
+ST_OPTEE_DEBUG_LOG_LEVEL = "${@bb.utils.contains('MINER_DEVICE_IDENTITY_VARIANT', 'release', '1', '2', d)}"
 EXTRA_OEMAKE += "CFG_WITH_USER_TA=y"
 EXTRA_OEMAKE += "CFG_RPMB_FS=y"
 EXTRA_OEMAKE += "CFG_REE_FS=n"
 
-EXTRA_OEMAKE += "${@bb.utils.contains('TARGET', 'miner-image-mfg', 'CFG_RPMB_WRITE_KEY=y CFG_TA_STM32MP_NVMEM=y', '', d)}"
+EXTRA_OEMAKE += "${@bb.utils.contains('MINER_DEVICE_IDENTITY_VARIANT', 'mfg', 'CFG_RPMB_WRITE_KEY=y CFG_TA_STM32MP_NVMEM=y', '', d)}"
 
-EXTRA_OEMAKE += "${@bb.utils.contains('TARGET', 'miner-image-release', 'CFG_RPMB_WRITE_KEY=n CFG_TA_STM32MP_NVMEM=n CFG_TEE_CORE_DEBUG=n CFG_WARN_INSECURE=n', '', d)}"
+EXTRA_OEMAKE += "${@bb.utils.contains('MINER_DEVICE_IDENTITY_VARIANT', 'release', 'CFG_RPMB_WRITE_KEY=n CFG_TA_STM32MP_NVMEM=n CFG_TEE_CORE_DEBUG=n CFG_WARN_INSECURE=n', '', d)}"
 
 # Debug/dev configs
 # EXTRA_OEMAKE += "CFG_RPMB_FS_DEBUG_DATA=y"
@@ -106,9 +106,7 @@ do_compile() {
         done
     }
 
-    # Build miner TAs once against the first conf's dev kit; the kit is
-    # arch-dependent, not conf-dependent, so the resulting ELFs are reused
-    # by every conf's core link.
+    # Build miner TAs once against the first conf's dev kit.
     set -- ${OPTEE_CONF}
     first_conf=$1
     oe_runmake -C ${S} O=${B}/${first_conf} CFG_EMBED_DTB_SOURCE_FILE=${first_conf}.dts $(soc_flag ${first_conf}) ta_dev_kit

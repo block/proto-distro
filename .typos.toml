@@ -1,5 +1,6 @@
 [files]
-extend-exclude = ["**/_vendor/**"]
+# Preserve verbatim upstream source and license notices.
+extend-exclude = ["**/_vendor/**", "**/THIRD_PARTY_NOTICES"]
 
 [default]
 extend-ignore-words-re = [

@@ -6,7 +6,7 @@
 exclude_rules_for_files:
   # Intentional firmware admin password; regeneration command lives beside hash.
   "np.pwhash.4":
-    - "**/sources/meta-miner/recipes-core/images/miner-image-minimal.bb"
+    - "**/sources/meta-miner/recipes-core/images/miner-image-common.inc"
   "np.pem.1":
     - "**/sources/meta-miner/recipes-dev/miner-signing-keys/files/dev/keys/dev/b3/root/b3-root-attestation-key-dev.priv.pem"
     - "**/sources/meta-miner/recipes-dev/miner-signing-keys/files/dev/keys/dev/c2/intermediate/c2-dm-verity-rootfs-signing-key-dev.priv.pem"

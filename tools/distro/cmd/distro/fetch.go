@@ -51,7 +51,7 @@ func fetchCommand(configPath string) *cli.Command {
 			&cli.StringFlag{
 				Name:    "output-dir",
 				Aliases: []string{"o"},
-				Usage:   "output directory for downloaded artifacts",
+				Usage:   "parent directory for downloaded artifacts (default: configured artifact root with per-source folders)",
 			},
 			&cli.BoolFlag{
 				Name:  "json",
@@ -80,7 +80,7 @@ func runFetchCommand(c *cli.Context) error {
 		return err
 	}
 
-	result, err := runFetch(cfg, configPath, sources, c.String("pattern"), c.String("output-dir"), c.IsSet("output-dir"))
+	result, err := runFetch(cfg, configPath, sources, c.String("pattern"), c.String("output-dir"), c.String("output-dir") != "")
 	if err != nil {
 		return err
 	}

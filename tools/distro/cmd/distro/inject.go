@@ -15,6 +15,11 @@ func injectCommand() *cli.Command {
 		ArgsUsage: "INPUT_PATH [IPK_FILES_OR_DIRS...]",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
+				Name:    "output-dir",
+				Aliases: []string{"o"},
+				Usage:   "Output parent directory (default: modify input in place)",
+			},
+			&cli.StringFlag{
 				Name:  "version",
 				Usage: "optional VERSION value to write to /usr/lib/os-release inside the rootfs",
 			},
@@ -47,6 +52,7 @@ func injectCommand() *cli.Command {
 				Config:             cfg,
 				ConfigPath:         c.String("config"),
 				InputPath:          args[0],
+				OutputDir:          c.String("output-dir"),
 				IPKPaths:           args[1:],
 				Version:            c.String("version"),
 				PrivateKeyOverride: c.String("swu-key-file"),

@@ -32,7 +32,7 @@ func TestReplaceZipFromDirRebuildsZip(t *testing.T) {
 		t.Fatalf("writing new file: %v", err)
 	}
 
-	if err := replaceZipFromDir(baseDir, zipPath); err != nil {
+	if err := replaceZipFromDir(baseDir, zipPath, false); err != nil {
 		t.Fatalf("replaceZipFromDir returned error: %v", err)
 	}
 

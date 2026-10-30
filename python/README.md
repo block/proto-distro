@@ -6,16 +6,6 @@ The wheel ships only the `fsbl` and `create_avb_image` modules, including the ve
 
 ## Standalone wheel
 
-Tools releases (`tools-*` tags) attach one `proto_distro_security_tools-<version>-py3-none-any.whl`
-with four commands: `fsbl_signer`, `create_avb_image`, `verify_avb_image`, and `avbtool`.
-Download the wheel from the `block/proto-distro` tools release, then run:
-
-```bash
-export UV_DEFAULT_INDEX=https://pypi.org/simple
-uvx --python 3.12 --from /absolute/path/to/proto_distro_security_tools-0.0.8-py3-none-any.whl create_avb_image --help
-uvx --python 3.12 --from /absolute/path/to/proto_distro_security_tools-0.0.8-py3-none-any.whl avbtool --help
-```
-
 The supported platforms are macOS and Linux, each on arm64 and x86_64. Python
 3.12 or newer is required; CI tests Python 3.12 on all four native platforms.
 OpenSSL 3.x must be on PATH. The wheel includes the pinned, dm-init-patched AVB
@@ -246,9 +236,16 @@ hash -r
 export UV_DEFAULT_INDEX=https://pypi.org/simple
 uv sync --managed-python --project python --locked --extra dev
 uv run --managed-python --project python --locked create_avb_image --help
+uv run --managed-python --project python --locked --extra dev pytest python/fsbl/tests
+```
+
+Build publication artifacts and run the wheel/sdist smoke check only from an
+exported checkout, where generated `python/LICENSE` and package metadata include
+the Apache text:
+
+```bash
 wheel_dir="$(mktemp -d)"
 uv build --managed-python --python 3.12 python --out-dir "$wheel_dir"
-uv run --managed-python --project python --locked --extra dev pytest python/fsbl/tests
 uv run --managed-python --python 3.12 --no-project python python/tests/smoke_wheel.py \
   --wheel "$wheel_dir/proto_distro_security_tools-0.0.0-py3-none-any.whl" \
   --sdist "$wheel_dir/proto_distro_security_tools-0.0.0.tar.gz"
@@ -261,10 +258,6 @@ and checks installed FSBL signing/verification, excluded module/command absence,
 body/tail publication, both output protections, source preservation, tamper
 rejection, and trusted verification. Full images are reconstructed only inside
 scratch. Its synthetic block image is not a filesystem or board-boot test.
-Release CI builds once in a staging copy, tests the same wheel and sdist on all
-four platforms, and includes both in the release checksum manifest.
-Source builds retain version `0.0.0`; `tools-0.0.8` stamps
-`0.0.8` only in the staging copy. No PyPI publishing occurs.
 
 ## License
 
@@ -273,11 +266,10 @@ is `Apache-2.0 AND MIT` because `create_avb_image/_vendor/avbtool.py` retains it
 Android Open Source Project MIT copyright and terms. Its `UPSTREAM` file records
 the revision, local patch, and hashes; this project does not relicense that code.
 
-`LICENSE` is a packaging-local copy of the repository's canonical Apache text,
-needed because containers and CI stage `python/` without its parent directory.
-Keep both copies byte-identical. Both wheel and sdist include this text and
-`create_avb_image/_vendor/LICENSE`; wheels store these under
-`proto_distro_security_tools-<version>.dist-info/licenses/`.
+The internal checkout keeps only `create_avb_image/_vendor/LICENSE` in package
+license files. Export generates `python/LICENSE` from the first-party publication
+template and adds it to package metadata. Public wheels and sdists include both
+texts; wheels store them under `proto_distro_security_tools-<version>.dist-info/licenses/`.
 Dependencies are installed separately, not vendored in this wheel. Container
 distributions also need their dependencies' notices and applicable source
 compliance; this package's license files are not a container compliance bundle.

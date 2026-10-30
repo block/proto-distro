@@ -71,7 +71,7 @@ func TestFinalizeArtifactOutputExportsLocalFiles(t *testing.T) {
 				t.Fatal(err)
 			}
 			configPath := filepath.Join(dir, "distro.yaml")
-			folder, err := CreateArtifactOutput(cfg, configPath, dir, "c3-p1", "proto", variant, "1.2.3")
+			folder, err := CreateArtifactOutput(cfg, configPath, dir, "c3-p1", "proto", variant, "1.2.3", "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -131,7 +131,7 @@ func TestCreateArtifactOutputReplacesExistingFolder(t *testing.T) {
 			Files:          []string{"{target}-{machine}-{version}.rootfs.ext4"},
 		},
 	}
-	folderPath, err := CreateArtifactOutput(cfg, configPath, distroDir, "c3-p1", "proto", "release", "1.2.3")
+	folderPath, err := CreateArtifactOutput(cfg, configPath, distroDir, "c3-p1", "proto", "release", "1.2.3", "")
 	if err != nil {
 		t.Fatalf("CreateArtifactOutput returned error: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestCreateArtifactOutputVariantFiles(t *testing.T) {
 			if tc.requireMetadata {
 				cfg.Artifacts.Variants = map[string]config.ArtifactVariant{"release": {Files: []string{"release.metadata"}}}
 			}
-			folder, err := CreateArtifactOutput(cfg, filepath.Join(dir, "distro.yaml"), dir, "c3-p1", "proto", tc.variant, "1.2.3")
+			folder, err := CreateArtifactOutput(cfg, filepath.Join(dir, "distro.yaml"), dir, "c3-p1", "proto", tc.variant, "1.2.3", "")
 			if tc.wantError {
 				if !errors.Is(err, os.ErrNotExist) {
 					t.Fatalf("expected missing artifact, got %v", err)
@@ -202,6 +202,116 @@ func TestCreateArtifactOutputVariantFiles(t *testing.T) {
 			}
 			if _, err := os.Stat(filepath.Join(folder, rootfsName+".avb")); !os.IsNotExist(err) {
 				t.Fatalf("AVB unexpectedly exported: %v", err)
+			}
+		})
+	}
+}
+
+func TestCreateArtifactOutputExplicitConflicts(t *testing.T) {
+	for _, kind := range []string{"folder", "zip", "dangling-folder", "dangling-zip", "file-parent", "source", "nested-source", "symlink-source", "external-source", "invalid-version"} {
+		t.Run(kind, func(t *testing.T) {
+			dir := t.TempDir()
+			images := filepath.Join(dir, "images")
+			if err := os.Mkdir(images, 0755); err != nil {
+				t.Fatal(err)
+			}
+			source := filepath.Join(images, "rootfs.ext4")
+			if err := os.WriteFile(source, []byte("source sentinel"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cfg := &config.Config{Artifacts: config.Artifacts{RootDir: "artifacts", ImagesBasePath: "images", Files: []string{"rootfs.ext4"}}}
+			output := filepath.Join(dir, "output")
+			if err := os.Mkdir(output, 0755); err != nil {
+				t.Fatal(err)
+			}
+			name := "miner-image-base-c3-p1-1.2.3"
+			version := "1.2.3"
+			conflict := ""
+			wantError := "output artifact already exists:"
+			switch kind {
+			case "folder":
+				folder := filepath.Join(output, name)
+				if err := os.Mkdir(folder, 0755); err != nil {
+					t.Fatal(err)
+				}
+				conflict = filepath.Join(folder, "sentinel")
+			case "zip":
+				conflict = filepath.Join(output, name+".zip")
+			case "dangling-folder", "dangling-zip":
+				suffix := ""
+				if kind == "dangling-zip" {
+					suffix = ".zip"
+				}
+				if err := os.Symlink("missing", filepath.Join(output, name+suffix)); err != nil {
+					t.Fatal(err)
+				}
+			case "file-parent":
+				output = filepath.Join(output, "file")
+				conflict = output
+				wantError = "output parent is not a directory:"
+			case "source":
+				output = images
+				wantError = "output directory must not be inside input artifact directory"
+			case "nested-source":
+				output = filepath.Join(images, "new", "nested")
+				wantError = "output directory must not be inside input artifact directory"
+			case "symlink-source":
+				alias := filepath.Join(dir, "alias")
+				if err := os.Symlink(images, alias); err != nil {
+					t.Fatal(err)
+				}
+				output = filepath.Join(alias, "new", "nested")
+				wantError = "output directory must not be inside input artifact directory"
+			case "external-source":
+				external := filepath.Join(dir, "external")
+				if err := os.Mkdir(external, 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(external, filepath.Join(images, "companion")); err != nil {
+					t.Fatal(err)
+				}
+				cfg.Artifacts.Files = append(cfg.Artifacts.Files, "companion")
+				output = filepath.Join(external, "new", "nested")
+				wantError = "output directory must not be inside input artifact directory"
+			case "invalid-version":
+				version = "../escape"
+				wantError = "invalid output artifact name:"
+			}
+			if conflict != "" {
+				if err := os.WriteFile(conflict, []byte("destination sentinel"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, err := CreateArtifactOutput(cfg, filepath.Join(dir, "distro.yaml"), dir, "c3-p1", "proto", "base", version, output)
+			if err == nil || !strings.Contains(err.Error(), wantError) {
+				t.Fatalf("explicit output error = %v, want %q", err, wantError)
+			}
+			for path, want := range map[string]string{source: "source sentinel", conflict: "destination sentinel"} {
+				if path == "" {
+					continue
+				}
+				data, err := os.ReadFile(path)
+				if err != nil || string(data) != want {
+					t.Errorf("changed %s = %q: %v", path, data, err)
+				}
+			}
+			for _, parent := range []string{filepath.Join(dir, "output"), filepath.Join(dir, "artifacts")} {
+				for _, link := range []string{"miner-image-base-c3-p1-latest", "miner-image-latest", "miner-image-latest.zip"} {
+					if _, err := os.Lstat(filepath.Join(parent, link)); !os.IsNotExist(err) {
+						t.Errorf("failure published %s: %v", link, err)
+					}
+				}
+			}
+			if kind == "nested-source" || kind == "symlink-source" || kind == "external-source" {
+				if _, err := os.Lstat(filepath.Dir(output)); !os.IsNotExist(err) {
+					t.Errorf("overlap check created source directories: %v", err)
+				}
+			}
+			if kind == "dangling-folder" {
+				assertSymlink(t, filepath.Join(output, name), "missing")
+			}
+			if kind == "dangling-zip" {
+				assertSymlink(t, filepath.Join(output, name+".zip"), "missing")
 			}
 		})
 	}

@@ -27,8 +27,9 @@ func postbuildCommand() *cli.Command {
 			},
 			&cli.StringFlag{
 				Name:  "version",
-				Usage: "Version to write into /usr/lib/os-release VERSION inside the rootfs (default: derived from git)",
+				Usage: "Version for rootfs /usr/lib/os-release VERSION and rebuilt SWU software.version (default: derived from git)",
 			},
+			&cli.StringFlag{Name: "output-dir", Aliases: []string{"o"}, Usage: "Output parent directory for artifacts, ZIP, and latest links (default: existing locations)"},
 		},
 		Action: func(c *cli.Context) error {
 			if c.Args().Len() < 1 {
@@ -57,12 +58,12 @@ func postbuildCommand() *cli.Command {
 			inputPath := c.Args().First()
 			configPath := c.String("config")
 
-			return runPostbuild(cfg, configPath, inputPath, variant, injectVersion)
+			return runPostbuild(cfg, configPath, inputPath, variant, injectVersion, c.String("output-dir"))
 		},
 	}
 }
 
-func runPostbuild(cfg *config.Config, configPath, inputPath, variant, injectVersion string) error {
+func runPostbuild(cfg *config.Config, configPath, inputPath, variant, injectVersion, outputDir string) error {
 	absInput, err := filepath.Abs(inputPath)
 	if err != nil {
 		return fmt.Errorf("resolving input path: %w", err)
@@ -80,39 +81,124 @@ func runPostbuild(cfg *config.Config, configPath, inputPath, variant, injectVers
 	if err != nil {
 		return fmt.Errorf("input path not found: %s", absInput)
 	}
+	if outputDir != "" {
+		outputDir, err = filepath.Abs(outputDir)
+		if err != nil {
+			return fmt.Errorf("resolving output path: %w", err)
+		}
+	}
 
 	folderPath := absInput
+	if outputDir != "" {
+		folderPath, err = preparePostbuildOutput(cfg, absInput, variant, injectVersion, outputDir)
+		if err != nil {
+			return err
+		}
+	} else {
 
-	// If input is a zip, extract it to a sibling directory.
-	if !info.IsDir() {
-		if !strings.HasSuffix(absInput, ".zip") {
-			return fmt.Errorf("input must be a .zip file or directory: %s", absInput)
+		// If input is a zip, extract it to a sibling directory.
+		if !info.IsDir() {
+			if !strings.HasSuffix(absInput, ".zip") {
+				return fmt.Errorf("input must be a .zip file or directory: %s", absInput)
+			}
+			folderPath = strings.TrimSuffix(absInput, ".zip")
+			fmt.Fprintf(os.Stderr, "Extracting %s -> %s\n", filepath.Base(absInput), filepath.Base(folderPath))
+			if err := os.RemoveAll(folderPath); err != nil {
+				return fmt.Errorf("removing existing extraction dir: %w", err)
+			}
+			if err := os.Mkdir(folderPath, 0o755); err != nil {
+				return fmt.Errorf("creating extraction dir: %w", err)
+			}
+			if err := fileutil.ExtractZip(absInput, folderPath); err != nil {
+				return fmt.Errorf("extracting zip: %w", err)
+			}
 		}
-		folderPath = strings.TrimSuffix(absInput, ".zip")
-		fmt.Fprintf(os.Stderr, "Extracting %s -> %s\n", filepath.Base(absInput), filepath.Base(folderPath))
-		if err := os.RemoveAll(folderPath); err != nil {
-			return fmt.Errorf("removing existing extraction dir: %w", err)
-		}
-		if err := os.Mkdir(folderPath, 0o755); err != nil {
-			return fmt.Errorf("creating extraction dir: %w", err)
-		}
-		if err := fileutil.ExtractZip(absInput, folderPath); err != nil {
-			return fmt.Errorf("extracting zip: %w", err)
-		}
-	}
 
-	// Outer artifact versions can change while embedded seed member names stay fixed.
-	renamed, err := renameArtifactToVersion(cfg, variant, folderPath, injectVersion)
-	if err != nil {
-		return err
+		// Rename exported files first; shared rebuilding updates replaced SWU members and software.version.
+		renamed, err := renameArtifactToVersion(cfg, variant, folderPath, injectVersion)
+		if err != nil {
+			return err
+		}
+		folderPath = renamed
 	}
-	folderPath = renamed
 
 	if err := postbuild.InjectPackages(cfg, configPath, cfg.Defaults.Machine, variant, folderPath, injectVersion); err != nil {
 		return fmt.Errorf("post-build injection: %w", err)
 	}
+	if outputDir != "" {
+		outputConfig := *cfg
+		outputConfig.Artifacts.RootDir = outputDir
+		cfg = &outputConfig
+	}
 
 	return postbuild.FinalizeArtifactOutput(cfg, configPath, cfg.Defaults.Machine, variant, folderPath)
+}
+
+func preparePostbuildOutput(cfg *config.Config, inputPath, variant, version, outputDir string) (string, error) {
+	info, err := os.Stat(inputPath)
+	if err != nil {
+		return "", fmt.Errorf("checking input artifact: %w", err)
+	}
+	sourceBase := filepath.Base(inputPath)
+	if !info.IsDir() {
+		if !strings.HasSuffix(inputPath, ".zip") {
+			return "", fmt.Errorf("input must be a .zip file or directory: %s", inputPath)
+		}
+		sourceBase = strings.TrimSuffix(sourceBase, ".zip")
+	}
+	prefix := config.TargetName(variant) + "-" + cfg.Defaults.Machine + "-"
+	if !strings.HasPrefix(sourceBase, prefix) {
+		return "", fmt.Errorf("cannot rename: folder %q does not start with %q", sourceBase, prefix)
+	}
+	oldVersion := strings.TrimPrefix(sourceBase, prefix)
+	if oldVersion == "" {
+		return "", fmt.Errorf("cannot rename: no version token in folder %q", sourceBase)
+	}
+	finalName := strings.ReplaceAll(sourceBase, oldVersion, version)
+	if finalName == "." || finalName == ".." || filepath.Base(finalName) != finalName {
+		return "", fmt.Errorf("invalid output artifact name: %q", finalName)
+	}
+
+	outputDir, err = fileutil.ResolveOutputParent(outputDir)
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() {
+		inside, err := fileutil.IsWithin(inputPath, outputDir)
+		if err != nil {
+			return "", fmt.Errorf("checking output directory: %w", err)
+		}
+		if inside {
+			return "", fmt.Errorf("output directory must not be inside input artifact directory")
+		}
+	}
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return "", fmt.Errorf("creating output directory: %w", err)
+	}
+	finalFolder := filepath.Join(outputDir, finalName)
+	for _, path := range []string{finalFolder, finalFolder + ".zip"} {
+		if _, err := os.Lstat(path); err == nil {
+			return "", fmt.Errorf("output artifact already exists: %s", path)
+		} else if !os.IsNotExist(err) {
+			return "", fmt.Errorf("checking output artifact %s: %w", path, err)
+		}
+	}
+	if err := os.Mkdir(finalFolder, 0o755); err != nil {
+		return "", fmt.Errorf("creating output artifact directory: %w", err)
+	}
+	if info.IsDir() {
+		if err := fileutil.CopyDir(inputPath, finalFolder); err != nil {
+			return "", fmt.Errorf("copying artifact to %s: %w", finalFolder, err)
+		}
+	} else {
+		if err := fileutil.ExtractZip(inputPath, finalFolder); err != nil {
+			return "", fmt.Errorf("extracting zip to %s: %w", finalFolder, err)
+		}
+	}
+	if err := renameArtifactFiles(finalFolder, oldVersion, version); err != nil {
+		return "", err
+	}
+	return finalFolder, nil
 }
 
 func renameArtifactToVersion(cfg *config.Config, variant, folderPath, newVersion string) (string, error) {
@@ -154,9 +240,19 @@ func copyArtifactsWithVersion(folderPath, oldVersion, newVersion string) (string
 	}
 	fmt.Fprintf(os.Stderr, "Copied %s -> %s\n", oldBase, newBase)
 
-	entries, err := os.ReadDir(newFolder)
-	if err != nil {
+	if err := renameArtifactFiles(newFolder, oldVersion, newVersion); err != nil {
 		return folderPath, err
+	}
+	return newFolder, nil
+}
+
+func renameArtifactFiles(folderPath, oldVersion, newVersion string) error {
+	if oldVersion == newVersion {
+		return nil
+	}
+	entries, err := os.ReadDir(folderPath)
+	if err != nil {
+		return fmt.Errorf("reading artifact filenames: %w", err)
 	}
 	for _, e := range entries {
 		name := e.Name()
@@ -164,13 +260,13 @@ func copyArtifactsWithVersion(folderPath, oldVersion, newVersion string) (string
 			continue
 		}
 		newName := strings.ReplaceAll(name, oldVersion, newVersion)
-		from := filepath.Join(newFolder, name)
-		to := filepath.Join(newFolder, newName)
+		from := filepath.Join(folderPath, name)
+		to := filepath.Join(folderPath, newName)
 		if err := os.Rename(from, to); err != nil {
-			return folderPath, fmt.Errorf("renaming %s -> %s: %w", name, newName, err)
+			return fmt.Errorf("renaming %s -> %s: %w", name, newName, err)
 		}
 		fmt.Fprintf(os.Stderr, "Renamed %s -> %s\n", name, newName)
 	}
 
-	return newFolder, nil
+	return nil
 }

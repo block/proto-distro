@@ -1,7 +1,5 @@
 SUMMARY = "Precompiled SWUpdate orchestration tool"
-LICENSE = "Apache-2.0"
-LIC_FILES_CHKSUM = "file://${S}${datadir}/licenses/${PN}/LICENSE;md5=3b83ef96387f14655fc854ddc3c6bd57 \
-                    file://${S}${datadir}/licenses/${PN}/THIRD_PARTY_NOTICES;md5=c31f17dacebedbcf4f6cda7ee96e9089"
+LICENSE = "CLOSED"
 
 inherit bin_package deploy
 

@@ -26,6 +26,7 @@ type Options struct {
 	Variant       string
 	Command       string // "build", "shell", "clean", or "layers"
 	InjectVersion string // when non-empty, run injection and set this version in os-release
+	OutputDir     string // optional output parent, relative to the working directory
 }
 
 // buildContext holds the resolved state needed to assemble and run a docker build.
@@ -75,7 +76,7 @@ func Run(ctx context.Context, opts Options) error {
 				fmt.Fprintf(os.Stderr, "Warning: failed to sync build outputs from volume: %v\n", err)
 			}
 		}
-		if err := postbuild.ProcessPostBuild(bctx.cfg, bctx.opts.ConfigPath, bctx.distroDir, bctx.opts.Machine, bctx.opts.Distro, bctx.opts.Variant, bctx.distroVersion, bctx.opts.InjectVersion); err != nil {
+		if err := postbuild.ProcessPostBuild(bctx.cfg, bctx.opts.ConfigPath, bctx.distroDir, bctx.opts.Machine, bctx.opts.Distro, bctx.opts.Variant, bctx.distroVersion, bctx.opts.InjectVersion, bctx.opts.OutputDir); err != nil {
 			return fmt.Errorf("post-build processing failed: %w", err)
 		}
 		postbuild.BuildStats(bctx.cfg, bctx.distroDir, bctx.opts.Machine, bctx.opts.Distro, bctx.opts.Variant, bctx.distroVersion, duration)
@@ -125,6 +126,13 @@ func newBuildContext(ctx context.Context, opts Options) (*buildContext, error) {
 	distroVersion, err := DistroVersionString(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("detecting distro version: %w", err)
+	}
+	if opts.OutputDir != "" {
+		folderPath, err := postbuild.ArtifactOutputPath(opts.OutputDir, opts.Machine, opts.Variant, distroVersion)
+		if err != nil {
+			return nil, err
+		}
+		opts.OutputDir = filepath.Dir(folderPath)
 	}
 
 	return &buildContext{

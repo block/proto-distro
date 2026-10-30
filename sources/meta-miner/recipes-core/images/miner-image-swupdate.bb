@@ -1,7 +1,7 @@
-require miner-image-minimal.bb
+require miner-image-common.inc
 inherit swupdate
 
-DESCRIPTION = "Adds SWUpdate support on top of the minimal image."
+DESCRIPTION = "Shared image with SWUpdate support."
 IMAGE_INSTALL:append = " proto-swupdate"
 SWUPDATE_SRC_URI_EXCLUDE += "sw-description.in sw-with-fip-description.in bootstrap-hook.sh fip-post-install.sh"
 

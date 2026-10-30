@@ -8,7 +8,7 @@ PACKAGE_ARCH = "${MACHINE_ARCH}"
 
 # Select boot script based on image variant
 # Release images use boot-release.scr.cmd (with dm-verity/AVB verification)
-# All other images (mfg, minimal) use boot-default.scr.cmd
+# Manufacturing images use boot-default.scr.cmd.
 BOOTSCR = "${@bb.utils.contains('TARGET', 'miner-image-release', 'boot-release.scr.cmd', 'boot-default.scr.cmd', d)}"
 
 # Conditionally include only the required boot script file

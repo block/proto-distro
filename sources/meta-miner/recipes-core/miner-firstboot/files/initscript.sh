@@ -27,18 +27,16 @@ if [ ! -f "${SSL_DIR}/nginx.key" ]; then
 fi
 
 ### Resize datafs regardless of rootfs dm-verity state ###
-if ! grep -q 'VARIANT="minimal"' /etc/os-release; then
-  echo "Firstboot: Resizing data partition to end of sdmmc..."
-  DATA_PART_DEV=$(findmnt /data -o source -n)
-  DATA_PART_NAME=$(echo "$DATA_PART_DEV" | cut -d "/" -f 3)
-  DATA_DEV_NAME=$(echo /sys/block/*/"${DATA_PART_NAME}" | cut -d "/" -f 4)
-  DATA_DEV="/dev/${DATA_DEV_NAME}"
-  DATA_PART_NUM=$(cat "/sys/block/${DATA_DEV_NAME}/${DATA_PART_NAME}/partition")
+echo "Firstboot: Resizing data partition to end of sdmmc..."
+DATA_PART_DEV=$(findmnt /data -o source -n)
+DATA_PART_NAME=$(echo "$DATA_PART_DEV" | cut -d "/" -f 3)
+DATA_DEV_NAME=$(echo /sys/block/*/"${DATA_PART_NAME}" | cut -d "/" -f 4)
+DATA_DEV="/dev/${DATA_DEV_NAME}"
+DATA_PART_NUM=$(cat "/sys/block/${DATA_DEV_NAME}/${DATA_PART_NAME}/partition")
 
-  printf "w\n" | fdisk "$DATA_DEV"
-  growpart "$DATA_DEV" "$DATA_PART_NUM"
-  resize2fs "$DATA_PART_DEV"
-fi
+printf "w\n" | fdisk "$DATA_DEV"
+growpart "$DATA_DEV" "$DATA_PART_NUM"
+resize2fs "$DATA_PART_DEV"
 
 # Keep platform preparation best-effort. The unit disables itself after application hooks.
 exit 0

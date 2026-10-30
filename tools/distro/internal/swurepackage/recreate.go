@@ -56,16 +56,25 @@ func prepareRecreation(opts Options) (Options, []string, Components, error) {
 	if err != nil {
 		return opts, nil, components, err
 	}
-	if (components.Rootfs != "") != (opts.NewRootfs != "") {
-		return opts, nil, components, fmt.Errorf("rootfs replacement must match seed rootfs presence")
+	if opts.NewRootfs == "" && opts.NewFIP == "" {
+		return opts, nil, components, fmt.Errorf("at least one replacement is required")
 	}
-	if (components.FIP != "") != (opts.NewFIP != "") {
-		return opts, nil, components, fmt.Errorf("FIP replacement must match seed FIP presence")
+	if components.Rootfs == "" && opts.NewRootfs != "" {
+		return opts, nil, components, fmt.Errorf("rootfs replacement requires seed rootfs")
 	}
-	if components.Rootfs == "" && (opts.AVBBody != "" || opts.AVBTail != "") {
-		return opts, nil, components, fmt.Errorf("AVB replacement requires seed rootfs")
+	if components.FIP == "" && opts.NewFIP != "" {
+		return opts, nil, components, fmt.Errorf("FIP replacement requires seed FIP")
 	}
-	if components.Rootfs != "" {
+	if opts.NewRootfs == "" && (opts.AVBBody != "" || opts.AVBTail != "") {
+		return opts, nil, components, fmt.Errorf("AVB replacement requires rootfs replacement")
+	}
+	if opts.SoftwareVersion != "" && opts.NewRootfs == "" {
+		return opts, nil, components, fmt.Errorf("software version requires rootfs replacement")
+	}
+	if _, err := replacementNames(opts, names, components); err != nil {
+		return opts, nil, components, err
+	}
+	if opts.NewRootfs != "" {
 		opts, err = prepare(opts)
 	} else {
 		if opts.PrivateKey == "" && opts.KeyDir != "" {
@@ -77,14 +86,55 @@ func prepareRecreation(opts Options) (Options, []string, Components, error) {
 		if opts.Output == "" {
 			opts.Output = strings.TrimSuffix(opts.OldSWU, ".swu") + "_repackaged.swu"
 		}
-		for _, path := range []string{opts.NewFIP, opts.PrivateKey, opts.Passfile} {
+		for _, path := range []string{opts.PrivateKey, opts.Passfile} {
 			if _, e := regularFile(path); e != nil {
 				err = e
 				break
 			}
 		}
 	}
+	if err == nil && opts.NewFIP != "" {
+		_, err = regularFile(opts.NewFIP)
+	}
 	return opts, names, components, err
+}
+
+// replacementNames maps only explicitly replaced members, including rootfs metadata.
+func replacementNames(opts Options, names []string, components Components) (map[string]string, error) {
+	renames := make(map[string]string)
+	if opts.NewRootfs != "" {
+		root := strings.TrimSuffix(components.Rootfs, ".gz")
+		base := filepath.Base(opts.NewRootfs)
+		if !strings.HasSuffix(base, ".rootfs.ext4") {
+			return nil, fmt.Errorf("rootfs replacement filename must end in .rootfs.ext4 for seed updater compatibility")
+		}
+		renames[components.Rootfs] = base + ".gz"
+		for _, suffix := range []string{".avb.body", ".avb.tail"} {
+			renames[root+suffix] = base + suffix
+		}
+	}
+	if opts.NewFIP != "" {
+		if !reservedFIP(filepath.Base(opts.NewFIP)) {
+			return nil, fmt.Errorf("FIP replacement filename must match fip-*.bin")
+		}
+		renames[components.FIP] = filepath.Base(opts.NewFIP)
+	}
+	occupied := make(map[string]bool, len(names))
+	for _, name := range names {
+		occupied[name] = true
+	}
+	targets := make(map[string]bool, len(renames))
+	for old, name := range renames {
+		clean, err := fileutil.SafeMemberName(name)
+		if err != nil || clean != name || name == "sw-description" || name == "sw-description.sig" {
+			return nil, fmt.Errorf("unsafe replacement filename %q", name)
+		}
+		if targets[name] || name != old && occupied[name] {
+			return nil, fmt.Errorf("replacement filename collides with archive member: %s", name)
+		}
+		targets[name] = true
+	}
+	return renames, nil
 }
 
 type preparedRootfs struct {
@@ -140,7 +190,7 @@ func RebuildAll(options []Options) (err error) {
 	roots := make(map[[3]string]*preparedRootfs)
 	for i, job := range jobs {
 		var prepared *preparedRootfs
-		if job.components.Rootfs != "" {
+		if job.options.NewRootfs != "" {
 			key := [3]string{job.options.NewRootfs, job.options.AVBBody, job.options.AVBTail}
 			prepared = roots[key]
 			if prepared == nil {
@@ -172,7 +222,7 @@ func RebuildAll(options []Options) (err error) {
 	return nil
 }
 
-// Run preserves seed component membership, scripts, and payload names.
+// Run preserves unspecified members and uses replacement basenames for supplied payloads.
 func recreate(opts Options) error {
 	opts, names, components, err := prepareRecreation(opts)
 	if err != nil {
@@ -201,6 +251,13 @@ func recreate(opts Options) error {
 
 func recreateArchive(opts Options, names []string, components Components, directory string, prepared *preparedRootfs, strict bool) error {
 	root := components.Rootfs
+	if opts.NewRootfs == "" {
+		root = ""
+	}
+	renames, err := replacementNames(opts, names, components)
+	if err != nil {
+		return err
+	}
 	if _, err := extractCPIO(opts.OldSWU, directory); err != nil {
 		return err
 	}
@@ -273,7 +330,7 @@ func recreateArchive(opts Options, names []string, components Components, direct
 		}
 	}
 	fipHash := ""
-	if components.FIP != "" {
+	if opts.NewFIP != "" {
 		target := filepath.Join(directory, components.FIP)
 		if err = os.Remove(target); err != nil {
 			return err
@@ -288,7 +345,7 @@ func recreateArchive(opts Options, names []string, components Components, direct
 		replacements[components.FIP] = hash
 		fipHash = hash
 	}
-	// Change only replacement hashes. All scripts and selection policy stay trusted seed bytes.
+	// Change only replacement filenames and hashes. Other records stay seed bytes.
 	tokens, err := configTokens(source)
 	if err != nil {
 		return err
@@ -312,7 +369,15 @@ func recreateArchive(opts Options, names []string, components Components, direct
 		if !ok {
 			return fmt.Errorf("replacement record missing sha256: %s", name)
 		}
-		edits = append(edits, spanEdit{tokens[field.value].start, tokens[field.valueEnd-1].end, fmt.Sprintf("%q", hash)})
+		filename := record.fields["filename"]
+		// Keep spans ordered even when sha256 precedes filename.
+		filenameEdit := spanEdit{tokens[filename.value].start, tokens[filename.valueEnd-1].end, fmt.Sprintf("%q", renames[name])}
+		hashEdit := spanEdit{tokens[field.value].start, tokens[field.valueEnd-1].end, fmt.Sprintf("%q", hash)}
+		if filenameEdit.start < hashEdit.start {
+			edits = append(edits, filenameEdit, hashEdit)
+		} else {
+			edits = append(edits, hashEdit, filenameEdit)
+		}
 		counts[name]++
 	}
 	for name := range replacements {
@@ -321,6 +386,29 @@ func recreateArchive(opts Options, names []string, components Components, direct
 		}
 	}
 	source = applySpans(source, edits)
+	if opts.SoftwareVersion != "" {
+		source, err = rewriteSoftwareVersion(source, opts.SoftwareVersion)
+		if err != nil {
+			return err
+		}
+	}
+	for old, name := range renames {
+		if old != name {
+			if err = os.Rename(filepath.Join(directory, old), filepath.Join(directory, name)); err != nil {
+				return err
+			}
+		}
+		if hash, ok := expected[old]; ok {
+			delete(expected, old)
+			expected[name] = hash
+		}
+	}
+	if root != "" && strict {
+		oldPlain := strings.TrimSuffix(root, ".gz")
+		hash := expected[oldPlain]
+		delete(expected, oldPlain)
+		expected[strings.TrimSuffix(renames[root], ".gz")] = hash
+	}
 	if err = os.WriteFile(path, []byte(source), 0644); err != nil {
 		return err
 	}
@@ -340,6 +428,11 @@ func recreateArchive(opts Options, names []string, components Components, direct
 			order = append(order, strings.TrimSuffix(root, ".gz")+".avb.body", strings.TrimSuffix(root, ".gz")+".avb.tail")
 		}
 	}
+	for i, name := range order {
+		if replacement, ok := renames[name]; ok {
+			order[i] = replacement
+		}
+	}
 	created, err := createCPIO(directory, opts.Output, order)
 	if created {
 		defer func() {
@@ -352,6 +445,12 @@ func recreateArchive(opts Options, names []string, components Components, direct
 		return err
 	}
 	if strict {
+		if name, ok := renames[components.Rootfs]; ok {
+			components.Rootfs = name
+		}
+		if name, ok := renames[components.FIP]; ok {
+			components.FIP = name
+		}
 		err = verify(opts.Output, components, expected, fipHash)
 		return err
 	}
@@ -361,6 +460,10 @@ func recreateArchive(opts Options, names []string, components Components, direct
 // Preview remains local and read-only.
 func Preview(opts Options) ([]fileutil.PlanInput, []fileutil.PlanOutput, error) {
 	opts, names, components, err := prepareRecreation(opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	renames, err := replacementNames(opts, names, components)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -378,12 +481,15 @@ func Preview(opts Options) ([]fileutil.PlanInput, []fileutil.PlanOutput, error) 
 	outputs := []fileutil.PlanOutput{{Path: opts.Output, Action: "create"}}
 	seen := map[string]bool{}
 	for _, name := range names {
+		if replacement, ok := renames[name]; ok {
+			name = replacement
+		}
 		seen[name] = true
 		outputs = append(outputs, fileutil.PlanOutput{Path: opts.Output + "!/" + name, Action: "create"})
 	}
-	if root := components.Rootfs; root != "" {
+	if root := components.Rootfs; opts.NewRootfs != "" {
 		for _, suffix := range []string{".avb.body", ".avb.tail"} {
-			name := strings.TrimSuffix(root, ".gz") + suffix
+			name := renames[strings.TrimSuffix(root, ".gz")+suffix]
 			if !seen[name] {
 				outputs = append(outputs, fileutil.PlanOutput{Path: opts.Output + "!/" + name, Action: "create"})
 			}

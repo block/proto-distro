@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -120,7 +121,7 @@ func TestRunPostbuildVersionCopy(t *testing.T) {
 			entry := func(device string) string {
 				return fmt.Sprintf("{ filename = %q; sha256 = %q; device = %q; type = %q; compressed = %q; installed-directly = true; }", root+".gz", strings.Repeat("0", 64), device, "raw", "zlib")
 			}
-			commandWrite(t, filepath.Join(payload, "sw-description"), []byte("software = { stable = { copy1 = { images = ("+entry("/dev/mmcblk0p7")+"); }; copy2 = { images = ("+entry("/dev/mmcblk0p8")+"); }; }; };\n"))
+			commandWrite(t, filepath.Join(payload, "sw-description"), []byte("software = { version = \"1.0.0-release\"; stable = { copy1 = { images = ("+entry("/dev/mmcblk0p7")+"); }; copy2 = { images = ("+entry("/dev/mmcblk0p8")+"); }; }; };\n"))
 			commandRun(t, payload, "", "openssl", "dgst", "-sha256", "-sign", filepath.Join(dir, cfg.Signing.PrivateKey), "-out", "sw-description.sig", "sw-description")
 			if err := os.Mkdir(filepath.Join(oldFolder, "fip"), 0755); err != nil {
 				t.Fatal(err)
@@ -156,7 +157,12 @@ func TestRunPostbuildVersionCopy(t *testing.T) {
 			if fail {
 				t.Setenv("DISTRO_TEST_SIGNER_FAIL", "1")
 			}
-			err = runPostbuild(cfg, configPath, oldFolder, "release", "2.0.0")
+			configuration, err := yaml.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			commandWrite(t, configPath, configuration)
+			_, err = artifactCommand(postbuildCommand(), configPath, "--variant", "release", "--version", "2.0.0", oldFolder)
 			for name, want := range before {
 				if got := commandRead(t, filepath.Join(oldFolder, name)); !bytes.Equal(got, want) {
 					t.Errorf("old artifact %s changed", name)
@@ -220,7 +226,7 @@ func TestRunPostbuildVersionCopy(t *testing.T) {
 
 			extracted := t.TempDir()
 			commandRun(t, extracted, string(commandRead(t, filepath.Join(newFolder, newName+".swu"))), "cpio", "-idm")
-			compressed := commandRead(t, filepath.Join(extracted, root+".gz"))
+			compressed := commandRead(t, filepath.Join(extracted, newRoot+".gz"))
 			reader, err := gzip.NewReader(bytes.NewReader(compressed))
 			if err != nil {
 				t.Fatal(err)
@@ -235,9 +241,9 @@ func TestRunPostbuildVersionCopy(t *testing.T) {
 			if !bytes.Equal(unpacked, wantRoot) {
 				t.Fatal("SWU gzip differs from plain rootfs")
 			}
-			assertAVBPair(t, extracted, root)
+			assertAVBPair(t, extracted, newRoot)
 			description := string(commandRead(t, filepath.Join(extracted, "sw-description")))
-			if strings.Count(description, root+".gz") != 2 || strings.Contains(description, newRoot+".gz") || strings.Count(description, fmt.Sprintf("%x", sha256.Sum256(compressed))) != 2 {
+			if strings.Count(description, newRoot+".gz") != 2 || strings.Contains(description, root+".gz") || strings.Count(description, fmt.Sprintf("%x", sha256.Sum256(compressed))) != 2 {
 				t.Fatalf("A/B references or hashes disagree: %s", description)
 			}
 			for _, name := range []string{newName + ".swu", newName + "-with-fip.swu", "extra.swu"} {
@@ -245,12 +251,15 @@ func TestRunPostbuildVersionCopy(t *testing.T) {
 				commandRun(t, unpacked, string(commandRead(t, filepath.Join(newFolder, name))), "cpio", "-idm")
 				commandRun(t, unpacked, "", "openssl", "dgst", "-sha256", "-verify", filepath.Join(dir, "public.pem"), "-signature", "sw-description.sig", "sw-description")
 				assertCommandOpaqueMembers(t, unpacked, name == newName+"-with-fip.swu")
-				if got := commandRun(t, unpacked, "", "gzip", "-dc", root+".gz"); !bytes.Equal(got, wantRoot) {
+				if got := commandRun(t, unpacked, "", "gzip", "-dc", newRoot+".gz"); !bytes.Equal(got, wantRoot) {
 					t.Fatal("rebuilt seed rootfs differs")
 				}
-				assertAVBPair(t, unpacked, root)
+				assertAVBPair(t, unpacked, newRoot)
 				description := string(commandRead(t, filepath.Join(unpacked, "sw-description")))
-				for _, member := range []string{root + ".gz", root + ".avb.body", root + ".avb.tail"} {
+				if !strings.Contains(description, `version = "2.0.0-release"`) || strings.Contains(description, `version = "1.0.0-release"`) {
+					t.Fatalf("postbuild did not update software.version in %s: %s", name, description)
+				}
+				for _, member := range []string{newRoot + ".gz", newRoot + ".avb.body", newRoot + ".avb.tail"} {
 					if !strings.Contains(description, fmt.Sprintf("%x", sha256.Sum256(commandRead(t, filepath.Join(unpacked, member))))) {
 						t.Fatalf("rebuilt seed missing hash for %s", member)
 					}
@@ -344,7 +353,7 @@ func TestRunPostbuildVersionCopy(t *testing.T) {
 				}
 			}
 			commandWrite(t, config.ResolvePath(configPath, cfg.Artifacts.LocalFiles[0]), []byte("new raw updater"))
-			if err := runPostbuild(cfg, configPath, newFolder, "release", "2.0.0"); err != nil {
+			if err := runPostbuild(cfg, configPath, newFolder, "release", "2.0.0", ""); err != nil {
 				t.Fatal(err)
 			}
 			if got := string(commandRead(t, filepath.Join(newFolder, "proto-swupdate"))); got != "new raw updater" {
@@ -354,13 +363,13 @@ func TestRunPostbuildVersionCopy(t *testing.T) {
 				unpacked := t.TempDir()
 				commandRun(t, unpacked, string(commandRead(t, filepath.Join(newFolder, name))), "cpio", "-idm")
 				commandRun(t, unpacked, "", "openssl", "dgst", "-sha256", "-verify", filepath.Join(dir, "public.pem"), "-signature", "sw-description.sig", "sw-description")
-				if got := commandRun(t, unpacked, "", "gzip", "-dc", root+".gz"); !bytes.Equal(got, commandRead(t, filepath.Join(newFolder, newRoot))) {
+				if got := commandRun(t, unpacked, "", "gzip", "-dc", newRoot+".gz"); !bytes.Equal(got, commandRead(t, filepath.Join(newFolder, newRoot))) {
 					t.Fatal("repeated postbuild rootfs differs")
 				}
-				assertAVBPair(t, unpacked, root)
+				assertAVBPair(t, unpacked, newRoot)
 				assertCommandOpaqueMembers(t, unpacked, name == newName+"-with-fip.swu")
 				description := string(commandRead(t, filepath.Join(unpacked, "sw-description")))
-				for _, member := range []string{root + ".gz", root + ".avb.body", root + ".avb.tail"} {
+				for _, member := range []string{newRoot + ".gz", newRoot + ".avb.body", newRoot + ".avb.tail"} {
 					if !strings.Contains(description, fmt.Sprintf("%x", sha256.Sum256(commandRead(t, filepath.Join(unpacked, member))))) {
 						t.Fatalf("repeated postbuild missing hash for %s", member)
 					}
@@ -501,4 +510,304 @@ func writeCommandCombinedSeed(t *testing.T, payload, folder, name string) {
 		}
 	}
 	commandWrite(t, filepath.Join(folder, name), commandRun(t, payload, members, "cpio", "-o", "-H", "newc"))
+}
+
+func TestPostbuildOutputConflict(t *testing.T) {
+	for _, kind := range []string{"folder", "zip", "dangling-folder", "dangling-zip", "file-parent", "inside", "same", "symlink-inside", "invalid-version"} {
+		t.Run(kind, func(t *testing.T) {
+			cfg, configPath := commandFixture(t)
+			base := filepath.Dir(configPath)
+			name := "miner-image-release-c3-p1-1.0.0"
+			source := filepath.Join(base, "input", name)
+			artifactPut(t, filepath.Join(source, "sentinel"), []byte("source"))
+			output := filepath.Join(base, "output")
+			version := "1.0.0"
+			wantError := "output artifact already exists:"
+			protected := ""
+			switch kind {
+			case "folder":
+				protected = filepath.Join(output, name, "sentinel")
+				artifactPut(t, protected, []byte("destination"))
+			case "zip":
+				protected = filepath.Join(output, name+".zip")
+				artifactPut(t, protected, []byte("destination"))
+			case "dangling-folder", "dangling-zip":
+				if err := os.Mkdir(output, 0755); err != nil {
+					t.Fatal(err)
+				}
+				path := filepath.Join(output, name)
+				if kind == "dangling-zip" {
+					path += ".zip"
+				}
+				if err := os.Symlink("missing", path); err != nil {
+					t.Fatal(err)
+				}
+			case "file-parent":
+				protected = output
+				artifactPut(t, protected, []byte("destination"))
+				wantError = ""
+			case "inside":
+				output = filepath.Join(source, "missing", "nested")
+				wantError = "output directory must not be inside input artifact directory"
+			case "same":
+				output = source
+				wantError = "output directory must not be inside input artifact directory"
+			case "symlink-inside":
+				alias := filepath.Join(base, "alias")
+				if err := os.Symlink(source, alias); err != nil {
+					t.Fatal(err)
+				}
+				output = filepath.Join(alias, "missing", "nested")
+				wantError = "output directory must not be inside input artifact directory"
+			case "invalid-version":
+				version = "../escaped"
+				wantError = "invalid output artifact name:"
+			}
+			before := artifactSnapshot(t, source)
+			existing := map[string]artifactState(nil)
+			if _, err := os.Lstat(output); err == nil {
+				existing = artifactSnapshot(t, output)
+			}
+			data, err := yaml.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			commandWrite(t, configPath, data)
+			_, err = artifactCommand(postbuildCommand(), configPath, "--version", version, "--output-dir", output, source)
+			if err == nil || (wantError != "" && !strings.Contains(err.Error(), wantError)) {
+				t.Fatalf("error = %v, want %q", err, wantError)
+			}
+			if !reflect.DeepEqual(before, artifactSnapshot(t, source)) {
+				t.Fatal("source changed")
+			}
+			if existing != nil && !reflect.DeepEqual(existing, artifactSnapshot(t, output)) {
+				t.Fatal("existing destination changed")
+			}
+			if protected != "" && string(commandRead(t, protected)) != "destination" {
+				t.Fatal("destination sentinel changed")
+			}
+			for _, parent := range []string{output, filepath.Join(base, cfg.Artifacts.RootDir)} {
+				for _, link := range []string{"miner-image-release-c3-p1-latest", "miner-image-latest", "miner-image-latest.zip"} {
+					if _, err := os.Lstat(filepath.Join(parent, link)); err == nil {
+						t.Fatalf("failed command published %s", link)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestPostbuildOutput(t *testing.T) {
+	for _, tc := range []struct {
+		name, version, flag string
+		zip, relative, fail bool
+	}{
+		{name: "folder-same", version: "1.2.3", flag: "--output-dir"},
+		{name: "folder-new-relative", version: "2.0.0", flag: "-o", relative: true},
+		{name: "zip-same-nested", version: "1.2.3", flag: "-o", zip: true},
+		{name: "zip-new", version: "2.0.0", flag: "--output-dir", zip: true},
+		{name: "folder-signer-failure", version: "2.0.0", flag: "--output-dir", fail: true},
+		{name: "zip-signer-failure", version: "1.2.3", flag: "-o", zip: true, fail: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, configPath := commandFixture(t)
+			base := filepath.Dir(configPath)
+			_, replacement, seed := swuArtifactFixture(t, base)
+			cfg.Signing = config.Signing{KeyDir: ".", PrivateKey: "private.pem", Passfile: "passout"}
+			cfg.Artifacts.LocalFiles = []string{"raw-updater"}
+			commandWrite(t, filepath.Join(base, "raw-updater"), []byte("configured updater"))
+			oldName := "miner-image-release-c3-p1-1.2.3"
+			newName := "miner-image-release-c3-p1-" + tc.version
+			source := filepath.Join(base, "input", oldName)
+			root := oldName + ".rootfs.ext4"
+			plain := commandRead(t, replacement)
+			artifactPut(t, filepath.Join(source, root), plain)
+			artifactPut(t, filepath.Join(source, oldName+".swu"), commandRead(t, seed))
+			artifactPut(t, filepath.Join(source, "nested", "keep-1.2.3.txt"), []byte("nested unchanged"))
+			input := source
+			if tc.zip {
+				input += ".zip"
+				if err := fileutil.CreateZip(source, input); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.RemoveAll(source); err != nil {
+					t.Fatal(err)
+				}
+				artifactPut(t, filepath.Join(source, "sentinel"), []byte("do not extract here"))
+			} else if tc.version == "1.2.3" {
+				input = filepath.Join(base, "input-latest")
+				if err := os.Symlink(source, input); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before := artifactSnapshot(t, filepath.Dir(source))
+			output := filepath.Join(base, "output")
+			if tc.name == "zip-same-nested" {
+				output = filepath.Join(output, "missing", "nested")
+			} else {
+				artifactPut(t, filepath.Join(output, "unrelated"), []byte("keep"))
+				for _, link := range []string{"miner-image-release-c3-p1-latest", "miner-image-latest", "miner-image-latest.zip"} {
+					if err := os.Symlink("previous", filepath.Join(output, link)); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			outputArg := output
+			if tc.relative {
+				cwd, err := os.Getwd()
+				if err != nil {
+					t.Fatal(err)
+				}
+				outputArg, err = filepath.Rel(cwd, output)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.name == "zip-new" {
+				outputArg = filepath.Join(base, "output-alias")
+				if err := os.Symlink(output, outputArg); err != nil {
+					t.Fatal(err)
+				}
+			}
+			data, err := yaml.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			commandWrite(t, configPath, data)
+			if tc.fail {
+				t.Setenv("DISTRO_TEST_SIGNER_FAIL", "1")
+			}
+			_, err = artifactCommand(postbuildCommand(), configPath, "--version", tc.version, tc.flag, outputArg, input)
+			if !reflect.DeepEqual(before, artifactSnapshot(t, filepath.Dir(source))) {
+				t.Fatal("source bytes or directory entries changed")
+			}
+			for _, link := range []string{"miner-image-release-c3-p1-latest", "miner-image-latest", "miner-image-latest.zip"} {
+				if _, err := os.Lstat(filepath.Join(base, cfg.Artifacts.RootDir, link)); !os.IsNotExist(err) {
+					t.Fatalf("configured artifact root received %s: %v", link, err)
+				}
+			}
+			folder := filepath.Join(output, newName)
+			if tc.fail {
+				if err == nil || !strings.Contains(err.Error(), "post-build injection:") {
+					t.Fatalf("signer error = %v", err)
+				}
+				if _, err := os.Lstat(folder + ".zip"); !os.IsNotExist(err) {
+					t.Fatalf("failed signing published ZIP: %v", err)
+				}
+				for _, link := range []string{"miner-image-release-c3-p1-latest", "miner-image-latest", "miner-image-latest.zip"} {
+					if got, err := os.Readlink(filepath.Join(output, link)); err != nil || got != "previous" {
+						t.Fatalf("failed signing changed %s: %q, %v", link, got, err)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			newRoot := newName + ".rootfs.ext4"
+			wantRoot := append(append([]byte{}, plain...), []byte("VERSION="+tc.version+"\n")...)
+			wantRoot = append(wantRoot, make([]byte, (512-len(wantRoot)%512)%512)...)
+			if !bytes.Equal(commandRead(t, filepath.Join(folder, newRoot)), wantRoot) {
+				t.Fatal("output rootfs version differs")
+			}
+			assertAVBPair(t, folder, newRoot)
+			if got := string(commandRead(t, filepath.Join(folder, "raw-updater"))); got != "configured updater" {
+				t.Fatal("local artifact did not resolve from original config")
+			}
+			if got := string(commandRead(t, filepath.Join(folder, "nested", "keep-1.2.3.txt"))); got != "nested unchanged" {
+				t.Fatal("nested filename or bytes changed")
+			}
+			unpacked := t.TempDir()
+			commandRun(t, unpacked, string(commandRead(t, filepath.Join(folder, newName+".swu"))), "cpio", "-idm")
+			commandRun(t, unpacked, "", "openssl", "dgst", "-sha256", "-verify", filepath.Join(base, "public.pem"), "-signature", "sw-description.sig", "sw-description")
+			if !bytes.Equal(commandRun(t, unpacked, "", "gzip", "-dc", newRoot+".gz"), wantRoot) {
+				t.Fatal("SWU rootfs differs from output rootfs")
+			}
+			if !strings.Contains(string(commandRead(t, filepath.Join(unpacked, "sw-description"))), `version = "`+tc.version+`"`) {
+				t.Fatal("SWU version differs")
+			}
+			checksums := string(commandRead(t, filepath.Join(folder, "sha.txt")))
+			archive, err := zip.OpenReader(folder + ".zip")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer archive.Close()
+			for _, member := range archive.File {
+				if member.FileInfo().IsDir() {
+					continue
+				}
+				reader, err := member.Open()
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, err := io.ReadAll(reader)
+				reader.Close()
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := commandRead(t, filepath.Join(folder, member.Name))
+				if !bytes.Equal(got, want) {
+					t.Fatalf("ZIP differs from final %s", member.Name)
+				}
+				if member.Name != "sha.txt" && !strings.Contains(checksums, fmt.Sprintf("%x  %s\n", sha256.Sum256(want), member.Name)) {
+					t.Fatalf("checksum missing for %s", member.Name)
+				}
+			}
+			for _, link := range []string{"miner-image-release-c3-p1-latest", "miner-image-latest", "miner-image-latest.zip"} {
+				want := folder
+				if strings.HasSuffix(link, ".zip") {
+					want += ".zip"
+				}
+				want, err := filepath.EvalSymlinks(want)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got, err := filepath.EvalSymlinks(filepath.Join(output, link)); err != nil || got != want {
+					t.Fatalf("%s resolves to %q, want %q: %v", link, got, want, err)
+				}
+			}
+			if tc.name != "zip-same-nested" && string(commandRead(t, filepath.Join(output, "unrelated"))) != "keep" {
+				t.Fatal("unrelated output artifact changed")
+			}
+		})
+	}
+}
+
+func TestPreparePostbuildOutputConcurrent(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(base, "miner-image-release-c3-p1-1.0.0")
+	want := bytes.Repeat([]byte("source"), 1<<18)
+	artifactPut(t, filepath.Join(source, "payload"), want)
+	cfg := &config.Config{Defaults: config.Defaults{Machine: "c3-p1"}}
+	output := filepath.Join(base, "output")
+	if err := os.Mkdir(output, 0755); err != nil {
+		t.Fatal(err)
+	}
+	start := make(chan struct{})
+	results := make(chan error, 16)
+	for range 16 {
+		go func() {
+			<-start
+			_, err := preparePostbuildOutput(cfg, source, "release", "1.0.0", output)
+			results <- err
+		}()
+	}
+	close(start)
+	successes := 0
+	for range 16 {
+		if err := <-results; err == nil {
+			successes++
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("successful writers = %d, want exactly one", successes)
+	}
+	for _, folder := range []string{source, filepath.Join(output, filepath.Base(source))} {
+		if !bytes.Equal(commandRead(t, filepath.Join(folder, "payload")), want) {
+			t.Fatalf("payload changed in %s", folder)
+		}
+	}
 }

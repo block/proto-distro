@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -132,5 +133,65 @@ func TestGitVersionAndDistroPrecedence(t *testing.T) {
 	t.Setenv("DISTRO_VERSION", "")
 	if got, err := DistroVersionString(ctx, cfg); err != nil || got != "" {
 		t.Fatalf("empty override = %q, %v; want empty", got, err)
+	}
+}
+
+func TestBuildOutputPreflight(t *testing.T) {
+	t.Setenv("DISTRO_VERSION", "1.2.3")
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(dir, "distro.yaml")
+	if err := os.WriteFile(configPath, []byte("defaults:\n  machine: c3-p1\n  variant: release\nartifacts:\n  root_dir: configured\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(dir, "output", "nested")
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	relative, err := filepath.Rel(cwd, output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	build, err := newBuildContext(context.Background(), Options{ConfigPath: configPath, Command: "build", OutputDir: relative})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if build.opts.OutputDir != output {
+		t.Fatalf("resolved output = %q, want cwd-relative %q", build.opts.OutputDir, output)
+	}
+	if build.cfg.Artifacts.RootDir != "configured" {
+		t.Fatalf("output replaced original config root: %q", build.cfg.Artifacts.RootDir)
+	}
+	if _, err := os.Stat(output); !os.IsNotExist(err) {
+		t.Fatalf("preflight created output directory: %v", err)
+	}
+	folder := filepath.Join(output, "miner-image-release-c3-p1-1.2.3")
+	if err := os.MkdirAll(folder, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(folder, "sentinel")
+	if err := os.WriteFile(sentinel, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// A conflicting destination must fail before checking or invoking Docker.
+	bin := t.TempDir()
+	marker := filepath.Join(dir, "docker-called")
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\n: > \"$DISTRO_TEST_DOCKER_MARKER\"\nexit 91\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("DISTRO_TEST_DOCKER_MARKER", marker)
+	err = Run(context.Background(), Options{ConfigPath: configPath, Command: "build", OutputDir: relative})
+	if err == nil || !strings.Contains(err.Error(), "output artifact already exists:") {
+		t.Fatalf("build collision error = %v", err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Errorf("collision invoked Docker: %v", err)
+	}
+	if data, err := os.ReadFile(sentinel); err != nil || string(data) != "keep" {
+		t.Errorf("collision changed destination: %q: %v", data, err)
 	}
 }

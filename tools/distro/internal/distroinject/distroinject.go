@@ -25,6 +25,7 @@ type Options struct {
 	AVB            map[string]config.AVBKeys
 	ContainerImage string   // Docker image name for the injector container
 	InputPath      string   // Path to the distro zip package or release folder
+	OutputDir      string   // Optional output parent directory; preserves the input
 	IPKPaths       []string // IPK files or directories
 	Version        string   // Optional VERSION value to write to /usr/lib/os-release
 	PrivateKey     string   // RSA private key for SWU signing (empty = config default)
@@ -35,9 +36,10 @@ type Options struct {
 }
 
 // Run optionally injects packages/VERSION and always regenerates release/mfg AVB.
-// ZIP inputs are replaced only on success. Folder inputs are modified in-place
-// without recovery copies or transactional rollback.
+// Without OutputDir, ZIP inputs are replaced only on success and folder inputs
+// are modified in-place. OutputDir preserves the source and input artifact type.
 func Run(ctx context.Context, opts Options) (string, error) {
+	opts.Version = strings.TrimSpace(opts.Version)
 	inputPath, err := filepath.Abs(opts.InputPath)
 	if err != nil {
 		return "", fmt.Errorf("resolving input path: %w", err)
@@ -67,13 +69,59 @@ func Run(ctx context.Context, opts Options) (string, error) {
 		opts.IPKPaths[i] = abs
 	}
 
+	if !info.IsDir() && !strings.HasSuffix(inputPath, ".zip") {
+		return "", fmt.Errorf("input must be a .zip file or directory: %s", inputPath)
+	}
+	outputPath := inputPath
+	if opts.OutputDir != "" {
+		outputPath, err = prepareOutputPath(inputPath, info.IsDir(), opts.OutputDir)
+		if err != nil {
+			return "", err
+		}
+	}
 	if info.IsDir() {
-		return runFolder(ctx, inputPath, opts)
+		if opts.OutputDir != "" {
+			if err := fileutil.CopyDir(inputPath, outputPath); err != nil {
+				return "", fmt.Errorf("copying artifact to %s: %w", outputPath, err)
+			}
+		}
+		return runFolder(ctx, outputPath, opts)
 	}
-	if strings.HasSuffix(inputPath, ".zip") {
-		return runZip(ctx, inputPath, opts)
+	return runZip(ctx, inputPath, outputPath, opts)
+}
+
+func prepareOutputPath(inputPath string, directory bool, outputDir string) (string, error) {
+	outputDir, err := fileutil.ResolveOutputParent(outputDir)
+	if err != nil {
+		return "", err
 	}
-	return "", fmt.Errorf("input must be a .zip file or directory: %s", inputPath)
+	if directory {
+		within, err := fileutil.IsWithin(inputPath, outputDir)
+		if err != nil {
+			return "", fmt.Errorf("checking output directory: %w", err)
+		}
+		if within {
+			return "", fmt.Errorf("output directory must not be inside input artifact directory")
+		}
+	}
+	outputPath := filepath.Join(outputDir, filepath.Base(inputPath))
+	if _, err := os.Lstat(outputPath); err == nil {
+		return "", fmt.Errorf("output artifact already exists: %s", outputPath)
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("checking output artifact %s: %w", outputPath, err)
+	}
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return "", fmt.Errorf("creating output directory: %w", err)
+	}
+	if directory {
+		if err := os.Mkdir(outputPath, 0755); err != nil {
+			if os.IsExist(err) {
+				return "", fmt.Errorf("output artifact already exists: %s", outputPath)
+			}
+			return "", fmt.Errorf("creating output artifact %s: %w", outputPath, err)
+		}
+	}
+	return outputPath, nil
 }
 
 // injectIntoDir mutates the plain rootfs, signs release/mfg AVB, then rebuilds SWUs.
@@ -162,6 +210,7 @@ func injectIntoDir(ctx context.Context, dir string, opts Options) (bool, error) 
 			}
 			if components[i].Rootfs != "" {
 				batch[i].NewRootfs, batch[i].AVBBody, batch[i].AVBTail = rootfs, body, tail
+				batch[i].SoftwareVersion = opts.Version
 			}
 			if components[i].FIP != "" {
 				batch[i].NewFIP = fip
@@ -179,9 +228,8 @@ func injectIntoDir(ctx context.Context, dir string, opts Options) (bool, error) 
 	return true, nil
 }
 
-// runZip injects IPK packages into a distro zip package.
-// It replaces the input zip with a rebuilt archive from the modified contents.
-func runZip(ctx context.Context, zipFile string, opts Options) (string, error) {
+// runZip extracts the source once and publishes a rebuilt archive on success.
+func runZip(ctx context.Context, zipFile, outputPath string, opts Options) (string, error) {
 	tmpDir, err := os.MkdirTemp("", "distro-inject-*")
 	if err != nil {
 		return "", fmt.Errorf("creating temp directory: %w", err)
@@ -197,22 +245,22 @@ func runZip(ctx context.Context, zipFile string, opts Options) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !changed {
+	if !changed && outputPath == zipFile {
 		return zipFile, nil
 	}
-	if !opts.SkipChecksums {
+	if changed && !opts.SkipChecksums {
 		if err := writeSHA256(tmpDir); err != nil {
 			return "", fmt.Errorf("writing sha.txt: %w", err)
 		}
 	}
 
 	fmt.Println("Rebuilding zip...")
-	if err := replaceZipFromDir(tmpDir, zipFile); err != nil {
+	if err := replaceZipFromDir(tmpDir, outputPath, opts.OutputDir != ""); err != nil {
 		return "", fmt.Errorf("rebuilding zip: %w", err)
 	}
 
-	fmt.Printf("Done. Output: %s\n", zipFile)
-	return zipFile, nil
+	fmt.Printf("Done. Output: %s\n", outputPath)
+	return outputPath, nil
 }
 
 // runFolder injects IPK packages into a release folder in-place.
@@ -231,7 +279,7 @@ func runFolder(ctx context.Context, dir string, opts Options) (string, error) {
 	return dir, nil
 }
 
-func replaceZipFromDir(srcDir, zipFile string) error {
+func replaceZipFromDir(srcDir, zipFile string, exclusive bool) error {
 	tmpFile, err := os.CreateTemp(filepath.Dir(zipFile), filepath.Base(zipFile)+".tmp-*.zip")
 	if err != nil {
 		return err
@@ -245,6 +293,15 @@ func replaceZipFromDir(srcDir, zipFile string) error {
 
 	if err := fileutil.CreateZip(srcDir, tmpPath); err != nil {
 		return err
+	}
+	if exclusive {
+		if err := os.Link(tmpPath, zipFile); err != nil {
+			if os.IsExist(err) {
+				return fmt.Errorf("output artifact already exists: %s", zipFile)
+			}
+			return err
+		}
+		return nil
 	}
 	return os.Rename(tmpPath, zipFile)
 }

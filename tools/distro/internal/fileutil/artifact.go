@@ -78,3 +78,43 @@ func RequireAbsent(name string) error {
 	}
 	return nil
 }
+
+// ResolveOutputParent resolves existing symlink ancestors without creating directories.
+func ResolveOutputParent(outputDir string) (string, error) {
+	outputDir, err := filepath.Abs(outputDir)
+	if err != nil {
+		return "", fmt.Errorf("resolving output path: %w", err)
+	}
+	ancestor := outputDir
+	for {
+		resolved, err := filepath.EvalSymlinks(ancestor)
+		if err == nil {
+			info, err := os.Stat(resolved)
+			if err != nil {
+				return "", fmt.Errorf("checking output directory: %w", err)
+			}
+			if !info.IsDir() {
+				return "", fmt.Errorf("output parent is not a directory: %s", ancestor)
+			}
+			suffix, err := filepath.Rel(ancestor, outputDir)
+			if err != nil {
+				return "", fmt.Errorf("resolving output directory: %w", err)
+			}
+			return filepath.Join(resolved, suffix), nil
+		}
+		if !os.IsNotExist(err) || filepath.Dir(ancestor) == ancestor {
+			return "", fmt.Errorf("resolving output directory: %w", err)
+		}
+		ancestor = filepath.Dir(ancestor)
+	}
+}
+
+// IsWithin checks whether path equals or is below parent using path components.
+// Callers resolve symlinks before checking physical containment.
+func IsWithin(parent, path string) (bool, error) {
+	relative, err := filepath.Rel(parent, path)
+	if err != nil {
+		return false, err
+	}
+	return relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator)), nil
+}

@@ -16,18 +16,19 @@ import (
 
 // Options configures an SWU repackage operation.
 type Options struct {
-	OldSWU     string // Path to the existing .swu file
-	NewRootfs  string // Plain ext4 paired with mandatory AVB body and tail
-	NewFIP     string // Replacement FIP when the seed contains a FIP
-	AVBBody    string // Trusted body paired with plain ext4 and tail
-	AVBTail    string // Trusted final sector paired with plain ext4 and body
-	PrivateKey string // RSA private key path (empty = use KeyDir default)
-	Passfile   string // Key passphrase file path (empty = use KeyDir default)
-	KeyDir     string // Directory containing signing keys (resolved path)
-	Output     string // Output .swu path (empty = <old>_repackaged.swu)
+	OldSWU          string // Path to the existing .swu file
+	NewRootfs       string // Plain ext4 paired with mandatory AVB body and tail
+	NewFIP          string // Replacement FIP when the seed contains a FIP
+	AVBBody         string // Trusted body paired with plain ext4 and tail
+	AVBTail         string // Trusted final sector paired with plain ext4 and body
+	SoftwareVersion string // Explicit rootfs software version; empty preserves the seed version
+	PrivateKey      string // RSA private key path (empty = use KeyDir default)
+	Passfile        string // Key passphrase file path (empty = use KeyDir default)
+	KeyDir          string // Directory containing signing keys (resolved path)
+	Output          string // Output .swu path (empty = <old>_repackaged.swu)
 }
 
-// Run recreates one signed SWU, replacing exactly the seed components.
+// Run recreates one signed SWU, replacing only explicitly supplied components.
 func Run(opts Options) error { return recreate(opts) }
 
 func stageRootfs(opts Options, directory, name string) ([]imagePayload, error) {

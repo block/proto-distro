@@ -11,6 +11,7 @@ type Params struct {
 	Config        *config.Config
 	ConfigPath    string
 	InputPath     string
+	OutputDir     string
 	IPKPaths      []string
 	Version       string
 	Machine       string
@@ -36,6 +37,7 @@ func RunWithConfig(ctx context.Context, params Params) (string, error) {
 		AVB:            cfg.AVB,
 		ConfigPath:     params.ConfigPath,
 		InputPath:      params.InputPath,
+		OutputDir:      params.OutputDir,
 		IPKPaths:       params.IPKPaths,
 		Version:        params.Version,
 		PrivateKey:     keys.PrivateKey,

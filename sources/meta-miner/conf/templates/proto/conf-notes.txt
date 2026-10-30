@@ -3,7 +3,6 @@
 You can now run 'bitbake <target>'
 
 Common targets are:
-    miner-image-minimal - minimal image (just enough to boot)
     miner-image-release - release image
     miner-image-mfg - manufacturing image (with manufacturing tools)
 

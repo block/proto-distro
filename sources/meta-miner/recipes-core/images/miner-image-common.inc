@@ -2,9 +2,7 @@ inherit core-image
 inherit extrausers
 require miner-image-base.bb
 
-DESCRIPTION = "Minimal usable image - shared base for release and mfg."
-
-VARIANT = "minimal"
+DESCRIPTION = "Shared image setup for release and manufacturing."
 
 IMAGE_FEATURES += "ssh-server-openssh"
 

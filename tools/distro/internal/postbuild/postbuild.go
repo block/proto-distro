@@ -14,8 +14,8 @@ import (
 
 // ProcessPostBuild exports Yocto sources, optionally injects packages/VERSION,
 // signs release/mfg AVB and discovered SWUs, then publishes latest links and a ZIP.
-func ProcessPostBuild(cfg *config.Config, configPath, distroDir, machine, distro, variant, distroVersion, injectVersion string) error {
-	folderPath, err := CreateArtifactOutput(cfg, configPath, distroDir, machine, distro, variant, distroVersion)
+func ProcessPostBuild(cfg *config.Config, configPath, distroDir, machine, distro, variant, distroVersion, injectVersion, outputDir string) error {
+	folderPath, err := CreateArtifactOutput(cfg, configPath, distroDir, machine, distro, variant, distroVersion, outputDir)
 	if err != nil {
 		return err
 	}
@@ -36,12 +36,17 @@ func ProcessPostBuild(cfg *config.Config, configPath, distroDir, machine, distro
 		}
 	}
 
+	if outputDir != "" {
+		outputConfig := *cfg
+		outputConfig.Artifacts.RootDir = filepath.Dir(folderPath)
+		cfg = &outputConfig
+	}
 	return FinalizeArtifactOutput(cfg, configPath, machine, variant, folderPath)
 }
 
 // CreateArtifactOutput creates the versioned artifact directory and copies the
 // configured build artifacts into it. It returns the created artifact folder.
-func CreateArtifactOutput(cfg *config.Config, configPath, distroDir, machine, distro, variant, distroVersion string) (string, error) {
+func CreateArtifactOutput(cfg *config.Config, configPath, distroDir, machine, distro, variant, distroVersion, outputDir string) (string, error) {
 	target := config.TargetName(variant)
 
 	artifactsDir := config.ArtifactRootDir(cfg, configPath)
@@ -57,15 +62,55 @@ func CreateArtifactOutput(cfg *config.Config, configPath, distroDir, machine, di
 		return "", fmt.Errorf("collecting artifacts: %w", err)
 	}
 
-	// Create versioned output directory
+	// Explicit output never replaces existing artifacts or writes into sources.
 	folderName := fmt.Sprintf("%s-%s-%s", target, machine, distroVersion)
 	folderPath := filepath.Join(artifactsDir, folderName)
-
+	if outputDir != "" {
+		folderPath, err = ArtifactOutputPath(outputDir, machine, variant, distroVersion)
+		if err != nil {
+			return "", err
+		}
+		artifactsDir = filepath.Dir(folderPath)
+		source, err := fileutil.ResolveArtifact(imagesBasePath)
+		if err != nil {
+			return "", fmt.Errorf("resolving output source: %w", err)
+		}
+		within, err := fileutil.IsWithin(source, artifactsDir)
+		if err != nil {
+			return "", fmt.Errorf("checking output directory: %w", err)
+		}
+		if within {
+			return "", fmt.Errorf("output directory must not be inside input artifact directory")
+		}
+	}
+	outputParent := ""
+	if outputDir != "" {
+		outputParent = artifactsDir
+	}
+	active := make(map[string]bool)
+	for _, source := range artifactPaths {
+		info, err := os.Stat(source)
+		if err != nil {
+			return "", fmt.Errorf("checking output source %s: %w", source, err)
+		}
+		if !info.IsDir() {
+			continue
+		}
+		source, err = fileutil.ResolveArtifact(source)
+		if err != nil {
+			return "", fmt.Errorf("resolving output source: %w", err)
+		}
+		if err := checkArtifactDirectory(source, outputParent, active); err != nil {
+			return "", fmt.Errorf("checking artifact directory %s: %w", source, err)
+		}
+	}
 	if err := os.MkdirAll(artifactsDir, 0o755); err != nil {
 		return "", fmt.Errorf("creating artifacts dir: %w", err)
 	}
-	if err := os.RemoveAll(folderPath); err != nil {
-		return "", fmt.Errorf("removing existing artifact folder: %w", err)
+	if outputDir == "" {
+		if err := os.RemoveAll(folderPath); err != nil {
+			return "", fmt.Errorf("removing existing artifact folder: %w", err)
+		}
 	}
 	if err := os.Mkdir(folderPath, 0o755); err != nil {
 		return "", fmt.Errorf("creating artifact folder: %w", err)
@@ -77,6 +122,74 @@ func CreateArtifactOutput(cfg *config.Config, configPath, distroDir, machine, di
 	}
 
 	return folderPath, nil
+}
+
+// ArtifactOutputPath resolves an explicit output parent and rejects existing
+// canonical artifacts before a build starts. It does not create directories.
+func ArtifactOutputPath(outputDir, machine, variant, version string) (string, error) {
+	name := fmt.Sprintf("%s-%s-%s", config.TargetName(variant), machine, version)
+	if name == "." || name == ".." || filepath.Base(name) != name {
+		return "", fmt.Errorf("invalid output artifact name: %q", name)
+	}
+	parent, err := fileutil.ResolveOutputParent(outputDir)
+	if err != nil {
+		return "", err
+	}
+	folderPath := filepath.Join(parent, name)
+	for _, path := range []string{folderPath, folderPath + ".zip"} {
+		if _, err := os.Lstat(path); err == nil {
+			return "", fmt.Errorf("output artifact already exists: %s", path)
+		} else if !os.IsNotExist(err) {
+			return "", fmt.Errorf("checking output artifact %s: %w", path, err)
+		}
+	}
+	return folderPath, nil
+}
+
+// checkArtifactDirectory follows the same directory targets as copyDir before
+// output creation. Active ancestors detect cycles without rejecting shared aliases.
+func checkArtifactDirectory(source, outputParent string, active map[string]bool) error {
+	if active[source] {
+		return fmt.Errorf("directory symlink cycle: %s", source)
+	}
+	if outputParent != "" {
+		within, err := fileutil.IsWithin(source, outputParent)
+		if err != nil {
+			return fmt.Errorf("checking output directory: %w", err)
+		}
+		if within {
+			return fmt.Errorf("output directory must not be inside input artifact directory")
+		}
+	}
+	active[source] = true
+	defer delete(active, source)
+
+	entries, err := os.ReadDir(source)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		path := filepath.Join(source, entry.Name())
+		if entry.Type()&fs.ModeSymlink != 0 {
+			path, err = filepath.EvalSymlinks(path)
+			if err != nil {
+				return fmt.Errorf("resolving symlink %s: %w", entry.Name(), err)
+			}
+			info, err := os.Stat(path)
+			if err != nil {
+				return fmt.Errorf("stat resolved symlink %s: %w", path, err)
+			}
+			if !info.IsDir() {
+				continue
+			}
+		} else if !entry.IsDir() {
+			continue
+		}
+		if err := checkArtifactDirectory(path, outputParent, active); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // FinalizeArtifactOutput copies local artifacts, refreshes checksums, and publishes

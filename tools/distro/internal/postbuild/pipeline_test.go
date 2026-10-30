@@ -16,66 +16,108 @@ import (
 )
 
 func TestProcessPostBuildPublishesUnsignedImages(t *testing.T) {
-	for _, variant := range []string{"minimal", "base"} {
-		t.Run(variant, func(t *testing.T) {
-			dir := t.TempDir()
-			images := filepath.Join(dir, "images")
-			if err := os.Mkdir(images, 0755); err != nil {
-				t.Fatal(err)
-			}
-			name := "miner-image-" + variant + "-c3-p1-1.2.3"
-			root := name + ".rootfs.ext4"
-			plain := []byte("unsigned rootfs")
-			if err := os.WriteFile(filepath.Join(images, root), plain, 0600); err != nil {
-				t.Fatal(err)
-			}
-			cfg := &config.Config{Artifacts: config.Artifacts{RootDir: "artifacts", ImagesBasePath: "images", Files: []string{"{target}-{machine}-{version}.rootfs.ext4"}}}
-			if err := ProcessPostBuild(cfg, filepath.Join(dir, "distro.yaml"), dir, "c3-p1", "proto", variant, "1.2.3", ""); err != nil {
-				t.Fatal(err)
-			}
-			artifacts := filepath.Join(dir, "artifacts")
-			folder := filepath.Join(artifacts, name)
-			data, err := os.ReadFile(filepath.Join(folder, root))
-			if err != nil || !bytes.Equal(data, plain) {
-				t.Fatalf("published rootfs = %q: %v", data, err)
-			}
-			checksums, err := os.ReadFile(filepath.Join(folder, "sha.txt"))
-			if err != nil || string(checksums) != fmt.Sprintf("%x  %s\n", sha256.Sum256(plain), root) {
-				t.Fatalf("unsigned checksums = %q: %v", checksums, err)
-			}
-			for _, link := range []string{"miner-image-" + variant + "-c3-p1-latest", "miner-image-latest"} {
-				assertSymlink(t, filepath.Join(artifacts, link), name)
-			}
-			assertSymlink(t, filepath.Join(artifacts, "miner-image-latest.zip"), name+".zip")
-			archive, err := zip.OpenReader(folder + ".zip")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer archive.Close()
-			assertZipContains(t, folder+".zip", "sha.txt")
-			for _, member := range archive.File {
-				if member.Name != root {
-					continue
+	for _, variant := range []string{"base"} {
+		for _, outputMode := range []string{"default", "absolute", "relative", "symlink"} {
+			t.Run(variant+"/"+outputMode, func(t *testing.T) {
+				dir := t.TempDir()
+				images := filepath.Join(dir, "images")
+				if err := os.Mkdir(images, 0755); err != nil {
+					t.Fatal(err)
 				}
-				reader, err := member.Open()
+				name := "miner-image-" + variant + "-c3-p1-1.2.3"
+				root := name + ".rootfs.ext4"
+				plain := []byte("unsigned rootfs")
+				if err := os.WriteFile(filepath.Join(images, root), plain, 0600); err != nil {
+					t.Fatal(err)
+				}
+				cfg := &config.Config{Artifacts: config.Artifacts{RootDir: "artifacts", ImagesBasePath: "images", Files: []string{"{target}-{machine}-{version}.rootfs.ext4"}}}
+				artifacts := filepath.Join(dir, "artifacts")
+				output := ""
+				if outputMode != "default" {
+					artifacts = filepath.Join(dir, "output", "nested")
+					output = artifacts
+					switch outputMode {
+					case "relative":
+						cwd, err := os.Getwd()
+						if err != nil {
+							t.Fatal(err)
+						}
+						output, err = filepath.Rel(cwd, output)
+						if err != nil {
+							t.Fatal(err)
+						}
+					case "symlink":
+						alias := filepath.Join(dir, "alias")
+						if err := os.Symlink(dir, alias); err != nil {
+							t.Fatal(err)
+						}
+						output = filepath.Join(alias, "output", "nested")
+					}
+				}
+				if err := ProcessPostBuild(cfg, filepath.Join(dir, "distro.yaml"), dir, "c3-p1", "proto", variant, "1.2.3", "", output); err != nil {
+					t.Fatal(err)
+				}
+				if cfg.Artifacts.RootDir != "artifacts" {
+					t.Fatalf("artifact root changed: %q", cfg.Artifacts.RootDir)
+				}
+				if output != "" {
+					if _, err := os.Lstat(filepath.Join(dir, "artifacts")); !os.IsNotExist(err) {
+						t.Fatalf("explicit output wrote configured artifact root: %v", err)
+					}
+				}
+				source, err := os.ReadFile(filepath.Join(images, root))
+				if err != nil || !bytes.Equal(source, plain) {
+					t.Fatalf("source rootfs changed: %q: %v", source, err)
+				}
+				entries, err := os.ReadDir(images)
+				if err != nil || len(entries) != 1 {
+					t.Fatalf("source directory changed: %v: %v", entries, err)
+				}
+				folder := filepath.Join(artifacts, name)
+				data, err := os.ReadFile(filepath.Join(folder, root))
+				if err != nil || !bytes.Equal(data, plain) {
+					t.Fatalf("published rootfs = %q: %v", data, err)
+				}
+				checksums, err := os.ReadFile(filepath.Join(folder, "sha.txt"))
+				if err != nil || string(checksums) != fmt.Sprintf("%x  %s\n", sha256.Sum256(plain), root) {
+					t.Fatalf("unsigned checksums = %q: %v", checksums, err)
+				}
+				for _, link := range []string{"miner-image-" + variant + "-c3-p1-latest", "miner-image-latest"} {
+					assertSymlink(t, filepath.Join(artifacts, link), name)
+				}
+				assertSymlink(t, filepath.Join(artifacts, "miner-image-latest.zip"), name+".zip")
+				archive, err := zip.OpenReader(folder + ".zip")
 				if err != nil {
 					t.Fatal(err)
 				}
-				data, err = io.ReadAll(reader)
-				reader.Close()
-				if err != nil || !bytes.Equal(data, plain) {
-					t.Fatalf("ZIP rootfs = %q: %v", data, err)
+				defer archive.Close()
+				assertZipContains(t, folder+".zip", "sha.txt")
+				for _, member := range archive.File {
+					if member.Name != root {
+						continue
+					}
+					reader, err := member.Open()
+					if err != nil {
+						t.Fatal(err)
+					}
+					data, err = io.ReadAll(reader)
+					reader.Close()
+					if err != nil || !bytes.Equal(data, plain) {
+						t.Fatalf("ZIP rootfs = %q: %v", data, err)
+					}
 				}
-			}
-		})
+			})
+		}
 	}
 }
 
 func TestProcessPostBuildSignsBeforePublication(t *testing.T) {
 	for _, variant := range []string{"release", "mfg"} {
-		for _, mode := range []string{"disabled", "zero packages", "signer failure", "missing companion", "missing updater"} {
-			fail := mode == "signer failure"
-			t.Run(variant+"/"+mode, func(t *testing.T) {
+		for _, testMode := range []string{"disabled", "zero packages", "signer failure", "missing companion", "missing updater", "output disabled", "output zero packages", "output signer failure"} {
+			t.Run(variant+"/"+testMode, func(t *testing.T) {
+				outputMode := strings.HasPrefix(testMode, "output ")
+				mode := strings.TrimPrefix(testMode, "output ")
+				fail := mode == "signer failure"
 				dir := t.TempDir()
 				shim, err := os.ReadFile("../distroinject/testdata/docker")
 				if err != nil {
@@ -99,6 +141,11 @@ func TestProcessPostBuildSignsBeforePublication(t *testing.T) {
 				}
 				images := filepath.Join(dir, "images")
 				artifacts := filepath.Join(dir, "artifacts")
+				output := ""
+				if outputMode {
+					artifacts = filepath.Join(dir, "output")
+					output = artifacts
+				}
 				for _, path := range []string{images, artifacts} {
 					if err := os.Mkdir(path, 0755); err != nil {
 						t.Fatal(err)
@@ -182,13 +229,37 @@ func TestProcessPostBuildSignsBeforePublication(t *testing.T) {
 					}
 				}
 				cfg.Signing = config.Signing{KeyDir: dir, PrivateKey: "private.pem", Passfile: "passfile"}
+				if outputMode {
+					cfg.AVB["c3-p1"] = config.AVBKeys{PrivateKey: "c3.key", PublicKey: "c3.key", AVBPublicKey: "c3.key"}
+					cfg.Signing.KeyDir = "."
+				}
 				if mode == "zero packages" {
 					cfg.Defaults.Arch = "armv7"
 					cfg.Injection.Enabled = true
 					cfg.Injection.Variants = map[string]config.InjectionVariant{variant: {}}
 				}
 				cfg.Docker.Injector.Image = "test-injector"
-				err = ProcessPostBuild(cfg, filepath.Join(dir, "distro.yaml"), dir, "c3-p1", "proto", variant, "1.2.3", "")
+				err = ProcessPostBuild(cfg, filepath.Join(dir, "distro.yaml"), dir, "c3-p1", "proto", variant, "1.2.3", "", output)
+				if cfg.Artifacts.RootDir != "artifacts" {
+					t.Fatalf("artifact root changed: %q", cfg.Artifacts.RootDir)
+				}
+				if outputMode {
+					for _, link := range links {
+						if _, err := os.Lstat(filepath.Join(dir, "artifacts", link)); !os.IsNotExist(err) {
+							t.Errorf("explicit output published configured-root link %s: %v", link, err)
+						}
+					}
+				}
+				if mode == "zero packages" {
+					if _, err := os.Stat(filepath.Join(dir, "artifacts", "injection-cache")); err != nil {
+						t.Errorf("missing original injection cache: %v", err)
+					}
+					if outputMode {
+						if _, err := os.Lstat(filepath.Join(artifacts, "injection-cache")); !os.IsNotExist(err) {
+							t.Errorf("injection cache moved into output: %v", err)
+						}
+					}
+				}
 				folder := filepath.Join(artifacts, name)
 				if fail || mode == "missing companion" || mode == "missing updater" {
 					if err == nil {
@@ -315,7 +386,7 @@ func TestProcessPostBuildSignsBeforePublication(t *testing.T) {
 							t.Fatalf("SWU %s differs: %v", part, err)
 						}
 					}
-					fip, err := os.ReadFile(filepath.Join(extracted, "fip-ota.bin"))
+					fip, err := os.ReadFile(filepath.Join(extracted, "fip-stm32mp131f-c3p1-optee.bin"))
 					if suffix == ".swu" && !os.IsNotExist(err) || suffix != ".swu" && (err != nil || string(fip) != "exact deployed FIP") {
 						t.Fatalf("FIP membership: %v", err)
 					}

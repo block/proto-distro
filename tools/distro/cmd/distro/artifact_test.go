@@ -80,7 +80,7 @@ func swuArtifactFixture(t *testing.T, base string) (string, string, string) {
 			t.Skipf("requires %s: %v", name, err)
 		}
 	}
-	root := filepath.Join(base, "rootfs.ext4")
+	root := filepath.Join(base, "replacement.rootfs.ext4")
 	artifactPut(t, root, bytes.Repeat([]byte{0x51}, 1024))
 	artifactPut(t, root+".avb.body", bytes.Repeat([]byte{0x24}, 512))
 	artifactPut(t, root+".avb.tail", bytes.Repeat([]byte{0x97}, 512))
@@ -110,7 +110,7 @@ func TestSWURecreateDryRunNoWrites(t *testing.T) {
 		t.Fatal(err)
 	}
 	configPath, root, seed := swuArtifactFixture(t, base)
-	fip := filepath.Join(base, "input.bin")
+	fip := filepath.Join(base, "fip-input.bin")
 	artifactPut(t, fip, []byte("explicit signed FIP"))
 	addSeedFIP(t, base, seed, fip)
 
@@ -132,7 +132,7 @@ func TestSWURecreateDryRunNoWrites(t *testing.T) {
 	}
 	before := artifactSnapshot(t, base)
 	output := filepath.Join(base, "rebuilt.swu")
-	report, err := artifactCommand(swuRecreateCommand(), configPath, "--dry", "--swu", seed, "--fip", fip, "-o", output, "--rootfs", root)
+	report, err := artifactCommand(swuRecreateCommand(), configPath, "--dry", "--swu", seed, "--fip", fip, "-o", output, "--rootfs", root, "--version", "1.2.3")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestSWURecreateDryRunNoWrites(t *testing.T) {
 	if !strings.Contains(report, output) {
 		t.Fatalf("missing output path %s:\n%s", output, report)
 	}
-	for _, member := range []string{"fip-ota.bin", "fip-post-install.sh"} {
+	for _, member := range []string{filepath.Base(fip), "fip-post-install.sh"} {
 		if !strings.Contains(report, member) {
 			t.Fatalf("missing planned FIP member %s: %s", member, report)
 		}
@@ -158,13 +158,39 @@ func TestSWURecreateDryRunNoWrites(t *testing.T) {
 func TestSWURecreateRejectsRootfsArguments(t *testing.T) {
 	base := t.TempDir()
 	configPath, root, seed := swuArtifactFixture(t, base)
-	for _, args := range [][]string{{root}, {"--rootfs", ""}, {"--rootfs", root + ".gz"}, {"--rootfs", root, root}} {
+	for _, suffix := range []string{"", ".avb.body", ".avb.tail"} {
+		artifactPut(t, filepath.Join(base, "rootfs.ext4")+suffix, commandRead(t, root+suffix))
+	}
+	for _, args := range [][]string{{root}, {"--rootfs", ""}, {"--rootfs", root + ".gz"}, {"--rootfs", filepath.Join(base, "rootfs.ext4")}, {"--rootfs", root, root}} {
 		before := artifactSnapshot(t, base)
-		if _, err := artifactCommand(swuRecreateCommand(), configPath, append([]string{"--swu", seed}, args...)...); err == nil {
+		if _, err := artifactCommand(swuRecreateCommand(), configPath, append([]string{"--swu", seed, "--version", "1.2.3"}, args...)...); err == nil {
 			t.Fatalf("accepted invalid rootfs arguments %q", args)
 		}
 		if !reflect.DeepEqual(before, artifactSnapshot(t, base)) {
 			t.Fatalf("invalid rootfs arguments mutated files: %q", args)
+		}
+	}
+}
+
+func TestSWURecreateVersionContract(t *testing.T) {
+	base := t.TempDir()
+	configPath, root, seed := swuArtifactFixture(t, base)
+	fip := filepath.Join(base, "fip-input.bin")
+	artifactPut(t, fip, []byte("firmware"))
+	addSeedFIP(t, base, seed, fip)
+	for _, args := range [][]string{
+		{"--rootfs", root},
+		{"--rootfs", root, "--version", ""},
+		{"--rootfs", root, "--version", " 2"},
+		{"--rootfs", root, "--version", "2\n"},
+		{"--fip", fip, "--version", "2"},
+	} {
+		before := artifactSnapshot(t, base)
+		if _, err := artifactCommand(swuRecreateCommand(), configPath, append([]string{"--swu", seed}, args...)...); err == nil {
+			t.Fatalf("accepted invalid version arguments %q", args)
+		}
+		if !reflect.DeepEqual(before, artifactSnapshot(t, base)) {
+			t.Fatal("invalid version arguments changed files")
 		}
 	}
 }
@@ -188,7 +214,7 @@ func TestSWURecreateUsesCreationTime(t *testing.T) {
 	}
 	output := filepath.Join(base, "rebuilt.swu")
 	before := time.Now().Truncate(time.Second)
-	if _, err := artifactCommand(swuRecreateCommand(), configPath, "--swu", seed, "-o", output, "--rootfs", root); err != nil {
+	if _, err := artifactCommand(swuRecreateCommand(), configPath, "--swu", seed, "-o", output, "--rootfs", root, "--version", "1.2.3"); err != nil {
 		t.Fatal(err)
 	}
 	after := time.Now()
@@ -222,7 +248,7 @@ func TestSWURecreateUsesCreationTime(t *testing.T) {
 	}
 }
 
-func TestSWURecreatePreservesPayloadNames(t *testing.T) {
+func TestSWURecreateUsesReplacementPayloadNames(t *testing.T) {
 	base := t.TempDir()
 	configPath, root, seed := swuArtifactFixture(t, base)
 	checksum := filepath.Join(base, "sha.txt")
@@ -239,16 +265,16 @@ func TestSWURecreatePreservesPayloadNames(t *testing.T) {
 	}
 	for repeat := range 2 {
 		output := filepath.Join(base, fmt.Sprintf("rebuilt-%d.swu", repeat))
-		if _, err := artifactCommand(swuRecreateCommand(), configPath, "--swu", seed, "-o", output, "--rootfs", root); err != nil {
+		if _, err := artifactCommand(swuRecreateCommand(), configPath, "--swu", seed, "-o", output, "--rootfs", root, "--version", "1.2.3"); err != nil {
 			t.Fatal(err)
 		}
 		extracted := t.TempDir()
 		commandRun(t, extracted, string(commandRead(t, output)), "cpio", "-idm")
-		if got := commandRun(t, extracted, "", "gzip", "-dc", seedRoot+".gz"); !bytes.Equal(got, original[root]) {
+		if got := commandRun(t, extracted, "", "gzip", "-dc", filepath.Base(root)+".gz"); !bytes.Equal(got, original[root]) {
 			t.Fatal("rootfs changed")
 		}
 		for _, suffix := range []string{".avb.body", ".avb.tail"} {
-			if !bytes.Equal(commandRead(t, filepath.Join(extracted, seedRoot+suffix)), original[root+suffix]) {
+			if !bytes.Equal(commandRead(t, filepath.Join(extracted, filepath.Base(root)+suffix)), original[root+suffix]) {
 				t.Fatal("AVB metadata changed")
 			}
 		}
@@ -262,7 +288,7 @@ func TestSWURecreatePreservesPayloadNames(t *testing.T) {
 		records := regexp.MustCompile(`\{\s*filename\s*=\s*"([^"]+)";([^{}]*)\}`).FindAllStringSubmatch(description, -1)
 		for _, device := range []string{"/dev/mmcblk0p7", "/dev/mmcblk0p8"} {
 			for index, suffix := range []string{".gz", ".avb.body", ".avb.tail"} {
-				name := seedRoot + suffix
+				name := filepath.Base(root) + suffix
 				count := 0
 				for _, record := range records {
 					if record[1] != name || !strings.Contains(record[2], device) {
@@ -298,7 +324,7 @@ func TestSWURecreatePreservesPayloadNames(t *testing.T) {
 	for _, failure := range []string{"missing pair", "geometry", "credentials", "existing"} {
 		t.Run(failure, func(t *testing.T) {
 			dir := t.TempDir()
-			badRoot := filepath.Join(dir, "rootfs.ext4")
+			badRoot := filepath.Join(dir, "replacement.rootfs.ext4")
 			for _, suffix := range []string{"", ".avb.body", ".avb.tail"} {
 				artifactPut(t, badRoot+suffix, original[root+suffix])
 			}
@@ -319,7 +345,7 @@ func TestSWURecreatePreservesPayloadNames(t *testing.T) {
 				commandWrite(t, output, []byte("prior output"))
 			}
 			before := artifactSnapshot(t, dir)
-			if _, err := artifactCommand(swuRecreateCommand(), configPath, append(args, "--rootfs", badRoot)...); err == nil {
+			if _, err := artifactCommand(swuRecreateCommand(), configPath, append(args, "--rootfs", badRoot, "--version", "1.2.3")...); err == nil {
 				t.Fatal("accepted invalid recreation")
 			}
 			after := artifactSnapshot(t, dir)
@@ -337,13 +363,13 @@ func TestSWURecreateFIPRoundTrip(t *testing.T) {
 	configPath, root, seed := swuArtifactFixture(t, base)
 	// Recreation must ignore missing build artifacts configured for other commands.
 	artifactPut(t, configPath, append(commandRead(t, configPath), []byte("\nartifacts:\n  local_files:\n    - dist/proto-swupdate/release/proto-swupdate_linux_arm_7/proto-swupdate\n")...))
-	fip := filepath.Join(base, "arbitrary-input.bin")
+	fip := filepath.Join(base, "fip-input.bin")
 	want := []byte("explicit production FIP bytes")
 	artifactPut(t, fip, want)
 	addSeedFIP(t, base, seed, fip)
 	for index, include := range []bool{true, true, true} {
 		output := filepath.Join(base, fmt.Sprintf("round-%d.swu", index))
-		args := []string{"--swu", seed, "-o", output, "--rootfs", root}
+		args := []string{"--swu", seed, "-o", output, "--rootfs", root, "--version", "1.2.3"}
 		if include {
 			args = append(args, "--fip", fip)
 		}
@@ -356,7 +382,7 @@ func TestSWURecreateFIPRoundTrip(t *testing.T) {
 		if !reflect.DeepEqual(before, artifactSnapshot(t, base)) {
 			t.Fatal("round-trip dry run changed files")
 		}
-		for _, member := range []string{"fip-ota.bin", "fip-post-install.sh"} {
+		for _, member := range []string{filepath.Base(fip), "fip-post-install.sh"} {
 			if strings.Contains(report, member) != include {
 				t.Fatalf("incorrect dry FIP membership: %s", report)
 			}
@@ -367,29 +393,29 @@ func TestSWURecreateFIPRoundTrip(t *testing.T) {
 		extracted := t.TempDir()
 		commandRun(t, extracted, string(commandRead(t, output)), "cpio", "-idm")
 		commandRun(t, extracted, "", "openssl", "dgst", "-sha256", "-verify", filepath.Join(base, "public.pem"), "-signature", "sw-description.sig", "sw-description")
-		for _, name := range []string{"fip-ota.bin", "fip-post-install.sh"} {
+		for _, name := range []string{filepath.Base(fip), "fip-post-install.sh"} {
 			_, err := os.Stat(filepath.Join(extracted, name))
 			if include && err != nil || !include && !os.IsNotExist(err) {
 				t.Fatalf("FIP membership %s include=%t: %v", name, include, err)
 			}
 		}
 		if include {
-			if !bytes.Equal(commandRead(t, filepath.Join(extracted, "fip-ota.bin")), want) {
+			if !bytes.Equal(commandRead(t, filepath.Join(extracted, filepath.Base(fip))), want) {
 				t.Fatal("FIP bytes changed")
 			}
 		}
-		if got := commandRun(t, extracted, "", "gzip", "-dc", seedRoot+".gz"); !bytes.Equal(got, commandRead(t, root)) {
+		if got := commandRun(t, extracted, "", "gzip", "-dc", filepath.Base(root)+".gz"); !bytes.Equal(got, commandRead(t, root)) {
 			t.Fatal("rootfs changed")
 		}
 		for _, suffix := range []string{".avb.body", ".avb.tail"} {
-			if !bytes.Equal(commandRead(t, filepath.Join(extracted, seedRoot+suffix)), commandRead(t, root+suffix)) {
+			if !bytes.Equal(commandRead(t, filepath.Join(extracted, filepath.Base(root)+suffix)), commandRead(t, root+suffix)) {
 				t.Fatal("AVB bytes changed")
 			}
 		}
 		seed = output
 	}
 	before := artifactSnapshot(t, base)
-	if _, err := artifactCommand(swuRecreateCommand(), configPath, "--swu", seed, "--fip", "", "--rootfs", root); err == nil {
+	if _, err := artifactCommand(swuRecreateCommand(), configPath, "--swu", seed, "--fip", "", "--rootfs", root, "--version", "1.2.3"); err == nil {
 		t.Fatal("accepted explicit empty --fip")
 	}
 	if !reflect.DeepEqual(before, artifactSnapshot(t, base)) {
