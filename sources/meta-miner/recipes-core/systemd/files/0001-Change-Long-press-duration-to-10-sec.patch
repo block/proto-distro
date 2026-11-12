@@ -1,0 +1,22 @@
+From cf97edae0998b75e3b3a17eb5ecce682fd86ed93 Mon Sep 17 00:00:00 2001
+From: BTCM SW Team <btcm-sw-team@block.xyz>
+Date: Wed, 12 Mar 2025 17:41:03 -0400
+Subject: [PATCH] Change Long press duration to 10 sec
+
+---
+ src/login/logind-button.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/login/logind-button.c b/src/login/logind-button.c
+index 7fb8114639..5168d445c9 100644
+--- a/src/login/logind-button.c
++++ b/src/login/logind-button.c
+@@ -19,7 +19,7 @@
+ 
+ #define ULONG_BITS (sizeof(unsigned long)*8)
+ 
+-#define LONG_PRESS_DURATION (5 * USEC_PER_SEC)
++#define LONG_PRESS_DURATION (10 * USEC_PER_SEC)
+ 
+ static bool bitset_get(const unsigned long *bits, unsigned i) {
+         return (bits[i / ULONG_BITS] >> (i % ULONG_BITS)) & 1UL;

@@ -1,0 +1,57 @@
+From: H. James Zhao <hjz@squareup.com>
+Subject: [PATCH] core: rpmb: translate init failures to STORAGE_NOT_AVAILABLE
+
+The libutee persistent-object wrappers (TEE_OpenPersistentObject,
+TEE_StartPersistentObjectEnumerator, TEE_CreatePersistentObject, ...)
+call TEE_Panic() on any return code outside a narrow allow-list. When
+RPMB is unusable because its auth key has not been provisioned on the
+eMMC -- most commonly when CFG_RPMB_WRITE_KEY=n on an unprovisioned
+device, in which case tee_rpmb_write_and_verify_key() returns
+TEE_ERROR_BAD_STATE -- the raw error propagates through the RPMB FS
+layer back to the TA and panics it inside libutee.
+
+Translate non-allow-listed failures from tee_rpmb_init() to
+TEE_ERROR_STORAGE_NOT_AVAILABLE, which is in the libutee allow-list.
+Codes that libutee already tolerates (ITEM_NOT_FOUND, ACCESS_CONFLICT,
+OUT_OF_MEMORY, CORRUPT_OBJECT, STORAGE_NOT_AVAILABLE) are preserved
+unchanged so TAs still see accurate diagnostics for those conditions.
+
+---
+ core/tee/tee_rpmb_fs.c | 25 +++++++++++++++++++++++++
+ 1 file changed, 25 insertions(+)
+
+diff --git a/core/tee/tee_rpmb_fs.c b/core/tee/tee_rpmb_fs.c
+--- a/core/tee/tee_rpmb_fs.c
++++ b/core/tee/tee_rpmb_fs.c
+@@ -1179,6 +1179,31 @@ static TEE_Result tee_rpmb_init(uint16_t dev_id)
+ 	}
+
+ func_exit:
++	/*
++	 * The libutee persistent-object wrappers panic on any return code
++	 * outside a small allow-list (SUCCESS, ITEM_NOT_FOUND,
++	 * ACCESS_CONFLICT, OUT_OF_MEMORY, CORRUPT_OBJECT,
++	 * STORAGE_NOT_AVAILABLE). When RPMB is unusable -- most commonly
++	 * because the auth key has not been provisioned on the eMMC
++	 * (e.g. CFG_RPMB_WRITE_KEY=n on an unprovisioned device, yielding
++	 * TEE_ERROR_BAD_STATE here), propagating the raw error panics the
++	 * calling TA inside libutee. Translate non-allow-listed failures
++	 * to TEE_ERROR_STORAGE_NOT_AVAILABLE so TAs can handle the
++	 * condition gracefully, while preserving the codes libutee already
++	 * tolerates for accurate diagnostics.
++	 */
++	switch (res) {
++	case TEE_SUCCESS:
++	case TEE_ERROR_ITEM_NOT_FOUND:
++	case TEE_ERROR_ACCESS_CONFLICT:
++	case TEE_ERROR_OUT_OF_MEMORY:
++	case TEE_ERROR_CORRUPT_OBJECT:
++	case TEE_ERROR_STORAGE_NOT_AVAILABLE:
++		break;
++	default:
++		res = TEE_ERROR_STORAGE_NOT_AVAILABLE;
++		break;
++	}
+ 	return res;
+ }
+

@@ -1,0 +1,11 @@
+[Unit]
+After=network-pre.target
+Before=avahi-daemon.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh "/usr/bin/init_hostname.sh"
+RemainAfterExit=true
+
+[Install]
+WantedBy=multi-user.target

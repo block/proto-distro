@@ -1,0 +1,13 @@
+fsbl_signer can be ran like so
+
+```
+fsbl_signer_args = [ "--product", "C3", "-i", unsigned_bin, "-o", signed_bin, "--sk", "privateKey00.pem", "--pwd", "qwert1", "--pk-hashes-out", <tmp-dir> ]
+for pubkey in sorted(glob.glob(d.getVar("STM32MP1_SIGN_KEYDIR") + "/publicKey*.pem")):
+fsbl_signer_args += [ "--pk", pubkey ]
+
+result = subprocess.run(["fsbl_signer", "sign"] + fsbl_signer_args, capture_output=True)
+```
+
+key directory is in: distro/sources/meta-miner/recipes-dev/miner-signing-keys/files/stm32mp13_dev_keys/
+unsigned binary is: test_artifacts/tf-a-stm32mp131f-c3p1-emmc.stm32  
+signed binary is:  test_artifacts/tf-a-stm32mp131f-c3p1-emmc_Signed.stm32

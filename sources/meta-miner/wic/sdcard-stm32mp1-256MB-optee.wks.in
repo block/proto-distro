@@ -1,0 +1,41 @@
+# short-description: Create SD card image with a boot partition (256MB)
+# long-description: Creates a partitioned SD card image (256MB)
+#
+#  - -------- ------------- ------ ------ ------------ -------- ---------- ---------- ---------- ------ 
+# | | TFA(2) | Metadata(2) | FIPA | FIPB | U-BOOT ENV | bootfs | rootfs_a | rootfs_b | recovery | data |
+#  - -------- ------------- ------ ------ ------------ -------- ---------- ---------- ---------- ------ 
+#
+# Warning: the first stage of boot (here fsbl1, fsbl2, metadata1, metadata2, fipa, fipb) MUST be on GPT partition to be detected.
+#
+
+# FSBL partitions aka TF-A BL2
+part fsbl1 --source rawcopy --fstype=ext4 --fsoptions "noauto" --part-name=fsbl1 --sourceparams="file=${DEPLOY_DIR_IMAGE}/arm-trusted-firmware/tf-a-${FIP_DEVICETREE_OPTEE}-sdcard.stm32" --ondisk mmcblk --part-type 0x8301 --fixed-size 256K --align 17
+part fsbl2 --source rawcopy --fstype=ext4 --fsoptions "noauto" --part-name=fsbl2 --sourceparams="file=${DEPLOY_DIR_IMAGE}/arm-trusted-firmware/tf-a-${FIP_DEVICETREE_OPTEE}-sdcard.stm32" --ondisk mmcblk --part-type 0x8301 --fixed-size 256K
+
+# Metadata partitions
+part metadata1 --source rawcopy --fstype=ext4 --fsoptions "noauto" --part-name=metadata1 --sourceparams="file=${DEPLOY_DIR_IMAGE}/arm-trusted-firmware/metadata.bin" --ondisk mmcblk --part-type 0x8301 --fixed-size 256K
+part metadata2 --source rawcopy --fstype=ext4 --fsoptions "noauto" --part-name=metadata2 --sourceparams="file=${DEPLOY_DIR_IMAGE}/arm-trusted-firmware/metadata.bin" --ondisk mmcblk --part-type 0x8301 --fixed-size 256K
+
+# Fip partitions
+part fip-a   --source rawcopy --fstype=ext4 --fsoptions "noauto" --part-name=fip-a --sourceparams="file=${DEPLOY_DIR_IMAGE}/fip/fip-${FIP_DEVICETREE_OPTEE}-optee.bin" --ondisk mmcblk --part-type 19d5df83-11b0-457b-be2c-7559c13142a5 --fixed-size 4096K --uuid 4fd84c93-54ef-463f-a7ef-ae25ff887087
+part fip-b   --source rawcopy --fstype=ext4 --fsoptions "noauto" --part-name=fip-b --sourceparams="file=${DEPLOY_DIR_IMAGE}/fip/fip-${FIP_DEVICETREE_OPTEE}-optee.bin" --ondisk mmcblk --part-type 19d5df83-11b0-457b-be2c-7559c13142a5 --fixed-size 4096K --uuid 09c54952-d5bf-45af-acee-335303766fb3
+
+# U-BOOT env
+part u-boot-env --source empty --part-name=uboot-env --ondisk mmcblk --part-type 0x8301 --fixed-size 512K
+
+# Bootfs
+part bootfs --source rawcopy --ondisk mmcblk --fstype=ext4 --label bootfs --active --sourceparams="file=${DEPLOY_DIR_IMAGE}/miner-bootfs-${DISTRO}-${MACHINE}.ext4" --fixed-size 512K
+
+# Rootfs_a
+part / --source rootfs --ondisk mmcblk --fstype=ext4 --label rootfs_a --fixed-size 1024M
+
+# Rootfs_b
+part --source empty --ondisk mmcblk --fstype=ext4 --label rootfs_b --fixed-size 1024M
+
+# Recovery
+part --source rootfs --ondisk mmcblk --fstype=ext4 --label recovery --fixed-size 1024M
+
+# Data
+part --source rawcopy --ondisk mmcblk --fstype=ext4 --label data --fixed-size 64M --sourceparams="file=${DEPLOY_DIR_IMAGE}/miner-datafs-${DISTRO}-${MACHINE}.ext4"
+
+bootloader --ptable gpt

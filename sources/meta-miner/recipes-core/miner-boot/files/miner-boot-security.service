@@ -1,0 +1,7 @@
+[Unit]
+Description=Select platform SSH and NATS security mode
+
+[Service]
+Type=oneshot
+TimeoutStartSec=5min
+ExecStart=/bin/sh /usr/bin/boot-security.sh

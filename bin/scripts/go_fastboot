@@ -1,0 +1,6 @@
+#!/bin/bash
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT=$(realpath "$SCRIPT_DIR/../..")
+
+just -f "${REPO_ROOT}/tools/go_fastboot/justfile" run "$@"

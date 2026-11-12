@@ -1,0 +1,44 @@
+set positional-arguments
+
+go := justfile_directory() / "../../bin/go"
+default_os := `../../bin/go env GOHOSTOS`
+default_arch := `../../bin/go env GOHOSTARCH`
+
+# Get git commit hash for version info
+git_commit := `git rev-parse --short HEAD 2>/dev/null || echo "unknown"`
+version := "dev"
+
+# Build the go_fastboot binary for specified OS/arch (defaults to local platform)
+# Examples:
+#   just build              # Build for current platform
+#   just build linux amd64  # Build for Linux x86_64
+#   just build darwin arm64 # Build for macOS Apple Silicon
+build os=default_os arch=default_arch:
+    @mkdir -p dist/{{ os }}-{{ arch }}
+    CGO_ENABLED=0 GOOS={{ os }} GOARCH={{ arch }} "{{ go }}" build \
+        -ldflags "-X proto-distro/tools/go_fastboot.Version={{ version }} -X proto-distro/tools/go_fastboot.GitCommit={{ git_commit }}" \
+        -o dist/{{ os }}-{{ arch }}/go_fastboot ./cmd/go_fastboot
+    @echo "Built: dist/{{ os }}-{{ arch }}/go_fastboot"
+
+# Build for all common platforms
+build-all:
+    @just build darwin arm64
+    @just build darwin amd64
+    @just build linux amd64
+    @just build linux arm64
+    @echo "\nAll builds complete:"
+    @ls -la dist/*/go_fastboot
+
+# Clean build artifacts
+clean:
+    @rm -rf dist/
+    @rm -f go_fastboot
+    @"{{ go }}" clean
+
+# Run from invocation directory
+run *ARGS:
+    @cd "{{ invocation_directory() }}" && CGO_ENABLED=0 "{{ go }}" run "{{ justfile_directory() }}/cmd/go_fastboot" "$@"
+
+# Build for local platform and run from invocation directory
+build-run *ARGS: build
+    @cd "{{ invocation_directory() }}" && "{{ justfile_directory() }}/dist/{{ default_os }}-{{ default_arch }}/go_fastboot" "$@"

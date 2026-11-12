@@ -1,0 +1,29 @@
+[submodule "sources/meta-openembedded"]
+	path = sources/meta-openembedded
+	url = https://github.com/openembedded/meta-openembedded
+[submodule "sources/meta-rust"]
+	path = sources/meta-rust
+	url = https://github.com/meta-rust/meta-rust
+[submodule "sources/meta-st-stm32mp"]
+	path = sources/meta-st-stm32mp
+	url = https://github.com/STMicroelectronics/meta-st-stm32mp
+[submodule "sources/meta-st-stm32mp-addons"]
+	path = sources/meta-st-stm32mp-addons
+	url = https://github.com/STMicroelectronics/meta-st-stm32mp-addons
+[submodule "sources/poky"]
+	path = sources/poky
+	url = https://github.com/yoctoproject/poky
+[submodule "sources/openembedded-core"]
+	path = sources/openembedded-core
+	url = https://github.com/openembedded/openembedded-core
+[submodule "sources/memfault-linux-sdk"]
+	path = sources/memfault-linux-sdk
+	url = https://github.com/memfault/memfault-linux-sdk.git
+	branch = kirkstone
+[submodule "sources/meta-swupdate"]
+	path = sources/meta-swupdate
+	url = https://github.com/sbabic/meta-swupdate.git
+	branch = kirkstone
+[submodule "sources/meta-miner/recipes-kernel/psu-pmbus-driver/proto-psu-driver"]
+	path = sources/meta-miner/recipes-kernel/psu-pmbus-driver/proto-psu-driver
+	url = https://github.com/block/proto-psu-driver.git

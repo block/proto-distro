@@ -1,0 +1,33 @@
+# POKY_BBLAYERS_CONF_VERSION is increased each time build/conf/bblayers.conf
+# changes incompatibly
+POKY_BBLAYERS_CONF_VERSION = "2"
+
+BBPATH = "${TOPDIR}"
+BBFILES ?= ""
+
+BBLAYERS = " \
+  ${TOPDIR}/../sources/openembedded-core/meta \
+  ${TOPDIR}/../sources/meta-openembedded/meta-oe \
+  ${TOPDIR}/../sources/meta-openembedded/meta-python \
+  ${TOPDIR}/../sources/meta-openembedded/meta-networking \
+  ${TOPDIR}/../sources/meta-openembedded/meta-webserver \
+  ${TOPDIR}/../sources/meta-rust \
+  ${TOPDIR}/../sources/meta-st-stm32mp \
+  ${TOPDIR}/../sources/memfault-linux-sdk/meta-memfault \
+  ${TOPDIR}/../sources/memfault-linux-sdk/meta-rust-bin \
+  ${TOPDIR}/../sources/meta-swupdate \
+  ${TOPDIR}/../sources/meta-miner \
+  "
+
+# ============================================================================
+# EXCLUSIONS
+# Below are all the defined exclusions
+# ============================================================================
+
+OVERRIDES = "machine"
+
+# Excludes from meta-st-stm32mp
+BBMASK += " \
+    ${TOPDIR}/../sources/meta-st-stm32mp/recipes-core/ \
+    ${TOPDIR}/../sources/meta-st-stm32mp/recipes-multimedia/ \
+    "

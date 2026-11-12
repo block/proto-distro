@@ -1,0 +1,4 @@
+SWUPDATE_SIGNING = "RSA"
+SWUPDATE_PRIVATE_KEY = "${STAGING_DATADIR_NATIVE}/swupdate_dev_keys/priv.pem"
+SWUPDATE_PUBLIC_KEY = "${STAGING_DATADIR_NATIVE}/swupdate_dev_keys/public.pem"
+SWUPDATE_PASSWORD_FILE = "${STAGING_DATADIR_NATIVE}/swupdate_dev_keys/passout"

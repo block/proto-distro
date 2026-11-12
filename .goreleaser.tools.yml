@@ -1,0 +1,95 @@
+version: 2
+
+project_name: tools
+
+# Keep default README/changelog patterns and ship the publication license template.
+archives:
+  - files:
+      - src: LICENSE
+        strip_parent: true
+      - readme*
+      - README*
+      - changelog*
+      - CHANGELOG*
+      - src: tools/THIRD_PARTY_NOTICES
+        strip_parent: true
+
+builds:
+  - id: distro
+    binary: distro
+    dir: tools/distro
+    main: ./cmd/distro
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X proto-distro/tools/distro/internal/version.Version={{.Version}}
+      - -X proto-distro/tools/distro/internal/version.Commit={{.Commit}}
+      - -X proto-distro/tools/distro/internal/version.Date={{.Date}}
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+  - id: opkg_inject
+    binary: opkg-inject
+    dir: tools/distro
+    main: ./cmd/opkg-inject
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X proto-distro/tools/distro/internal/version.Version={{.Version}}
+      - -X proto-distro/tools/distro/internal/version.Commit={{.Commit}}
+      - -X proto-distro/tools/distro/internal/version.Date={{.Date}}
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+  - id: cb_st_flasher
+    binary: cb_st_flasher
+    dir: tools/cb_st_flasher
+    main: ./cmd/cb_st_flasher
+    env:
+      - CGO_ENABLED=1
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X proto-distro/tools/cb_st_flasher/internal/version.Version={{.Version}}
+      - -X proto-distro/tools/cb_st_flasher/internal/version.Commit={{.Commit}}
+      - -X proto-distro/tools/cb_st_flasher/internal/version.Date={{.Date}}
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+  - id: go_fastboot
+    binary: go_fastboot
+    dir: tools/go_fastboot
+    main: ./cmd/go_fastboot
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X proto-distro/tools/go_fastboot.Version={{.Version}}
+      - -X proto-distro/tools/go_fastboot.GitCommit={{.Commit}}
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64

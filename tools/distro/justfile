@@ -1,0 +1,23 @@
+set positional-arguments
+
+# Build the distro CLI binary
+build:
+    @go build -o distro ./cmd/distro
+
+# Run tests
+test:
+    @go test ./...
+
+# Clean build artifacts
+clean:
+    @rm -f distro
+    @go clean
+
+# Run distro CLI (use build-run for invocation-directory-relative paths)
+[positional-arguments]
+run *ARGS:
+    @cd {{ invocation_directory() }} && go run {{ source_directory() }}/cmd/distro "$@"
+
+# Build and run from invocation directory
+build-run *ARGS: build
+    @cd {{ invocation_directory() }} && {{ source_directory() }}/distro "$@"

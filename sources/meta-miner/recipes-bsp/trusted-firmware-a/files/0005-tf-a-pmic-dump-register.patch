@@ -1,0 +1,21 @@
+diff --git a/drivers/st/pmic/stm32mp_pmic.c b/drivers/st/pmic/stm32mp_pmic.c
+index 961cdcc56..8a416b9c5 100644
+--- a/drivers/st/pmic/stm32mp_pmic.c
++++ b/drivers/st/pmic/stm32mp_pmic.c
+@@ -227,6 +227,16 @@ void print_pmic_info_and_debug(void)
+ 	regulator_core_dump();
+ #endif
+ #endif
++
++	uint8_t ponkey_timer;
++	if (!stpmic1_register_read(PONKEY_TIMER_REG, &ponkey_timer))  {
++		INFO("PMIC PONKEY_TIMER = 0x%02x\n", ponkey_timer);
++	}
++
++	uint8_t control_reg;
++	if (!stpmic1_register_read(MAIN_CONTROL_REG, &control_reg))  {
++		INFO("PMIC MAIN_CONTROL = 0x%02x\n", control_reg);
++	}
+ }
+ #endif
+ 

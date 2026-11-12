@@ -1,0 +1,8 @@
+#!/bin/bash
+
+# Get the directory where the script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT=$(realpath "$SCRIPT_DIR/../..")
+
+# Use just to run cb_st_flasher from the invocation directory
+just -f "${REPO_ROOT}/tools/cb_st_flasher/justfile" run "$@"

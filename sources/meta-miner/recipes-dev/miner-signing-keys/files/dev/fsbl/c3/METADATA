@@ -1,0 +1,8 @@
+version: 0.2.11
+source: https://github.com/block/miner-firmware/releases/tag/distro-0.2.11
+security_level: dev
+signing_authority: Development build system
+binaries:
+  - tf-a-stm32mp131f-c3p1-emmc-0.2.11.stm32
+  - tf-a-stm32mp131f-c3p1-uart-0.2.11.stm32
+  - tf-a-stm32mp131f-c3p1-usb-0.2.11.stm32

@@ -1,0 +1,69 @@
+From 7868db024bbe8d45a1720383d5e185fa6b2a2338 Mon Sep 17 00:00:00 2001
+From: Bart Kosciarz <bkosciarz@squareup.com>
+Date: Fri, 3 Oct 2025 14:38:06 -0700
+Subject: [PATCH 12/17] avb: Use rootfs partitions for dm-verity verification
+
+This patch modifies AVB to use rootfs_a/rootfs_b partitions for
+dm-verity verification instead of the traditional Android boot/vbmeta
+partitions.
+
+Changes:
+- Replace 'boot' with 'rootfs' in cmd/avb.c requested_partitions
+- Update avb_slot_verify.c fallback from 'boot' to 'rootfs' partition
+- Support Linux systems with hashtree footers embedded in rootfs
+
+This enables AVB verification for Linux systems using A/B rootfs
+partitions with embedded dm-verity hashtree footers.
+
+%% original patch: 0001-avb-Use-rootfs-partitions-for-dm-verity-verification.patch
+---
+ cmd/avb.c                    | 2 +-
+ lib/libavb/avb_slot_verify.c | 8 ++++----
+ 2 files changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/cmd/avb.c b/cmd/avb.c
+index 783f51b8169..b6cd183bf3a 100644
+--- a/cmd/avb.c
++++ b/cmd/avb.c
+@@ -231,7 +231,7 @@ int do_avb_get_uuid(struct cmd_tbl *cmdtp, int flag,
+ int do_avb_verify_part(struct cmd_tbl *cmdtp, int flag,
+ 		       int argc, char *const argv[])
+ {
+-	const char * const requested_partitions[] = {"boot", NULL};
++	const char * const requested_partitions[] = {"rootfs", NULL};
+ 	AvbSlotVerifyResult slot_result;
+ 	AvbSlotVerifyData *out_data;
+ 	char *cmdline;
+diff --git a/lib/libavb/avb_slot_verify.c b/lib/libavb/avb_slot_verify.c
+index ae8e1dffa4c..ddcc76ce4b9 100644
+--- a/lib/libavb/avb_slot_verify.c
++++ b/lib/libavb/avb_slot_verify.c
+@@ -685,12 +685,12 @@ static AvbSlotVerifyResult load_and_verify_vbmeta(
+     goto out;
+   } else if (io_ret != AVB_IO_RESULT_OK) {
+     /* If we're looking for 'vbmeta' but there is no such partition,
+-     * go try to get it from the boot partition instead.
++     * go try to get it from the rootfs partition instead for dm-verity.
+      */
+     if (is_main_vbmeta && io_ret == AVB_IO_RESULT_ERROR_NO_SUCH_PARTITION &&
+         !look_for_vbmeta_footer) {
+       avb_debugv(full_partition_name,
+-                 ": No such partition. Trying 'boot' instead.\n",
++                 ": No such partition. Trying 'rootfs' instead.\n",
+                  NULL);
+       ret = load_and_verify_vbmeta(ops,
+                                    requested_partitions,
+@@ -699,8 +699,8 @@ static AvbSlotVerifyResult load_and_verify_vbmeta(
+                                    allow_verification_error,
+                                    0 /* toplevel_vbmeta_flags */,
+                                    0 /* rollback_index_location */,
+-                                   "boot",
+-                                   avb_strlen("boot"),
++                                   "rootfs",
++                                   avb_strlen("rootfs"),
+                                    NULL /* expected_public_key */,
+                                    0 /* expected_public_key_length */,
+                                    slot_data,
+-- 
+2.53.0
+

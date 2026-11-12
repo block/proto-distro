@@ -1,0 +1,161 @@
+/* SPDX-License-Identifier: (GPL-2.0+ OR BSD-3-Clause) */
+/*
+* Copyright (C) Block Inc.
+* Author: btcm-sw-team@block.xyz
+*/
+
+#include <dt-bindings/pinctrl/stm32-pinfunc.h>
+#include "stm32mp131f-cx-pinctrl.dtsi"
+
+/* C2-specific pinctrl definitions */
+&pinctrl {
+    /* LED driver and I2C1 */
+    i2c1_pins_mx: i2c1-0 {
+        pins {
+            pinmux = <STM32_PINMUX('D', 3, AF5)>, /* I2C1_SDA - LED_I2C1_SDA */
+                     <STM32_PINMUX('B', 8, AF4)>; /* I2C1_SCL - LED_I2C1_SCL */
+            bias-disable;
+            drive-open-drain;
+            slew-rate = <0>;
+        };
+    };
+
+    i2c1_sleep_pins_mx: i2c1-sleep-0 {
+        pins {
+            pinmux = <STM32_PINMUX('D', 3, ANALOG)>, /* I2C1_SDA */
+                     <STM32_PINMUX('B', 8, ANALOG)>; /* I2C1_SCL */
+        };
+    };
+
+    /* Power and Recovery buttons */
+    button_pins_mx: button-0 {
+        pins {
+            pinmux = <STM32_PINMUX('E', 13, GPIO)>, /* PWR_BTN_L */
+                     <STM32_PINMUX('G', 11, GPIO)>; /* FW_RCVR_N */
+            bias-pull-up;
+        };
+    };
+
+    /* PSU control and I2C5 */
+    i2c5_pins_mx: i2c5-0 {
+        pins {
+            pinmux = <STM32_PINMUX('F', 3, AF4)>, /* I2C5_SDA - PSU_I2C5_SDA */
+                     <STM32_PINMUX('H', 13, AF4)>; /* I2C5_SCL - PSU_I2C5_SCL */
+            bias-disable;
+            drive-open-drain;
+            slew-rate = <0>;
+        };
+    };
+
+    i2c5_sleep_pins_mx: i2c5-sleep-0 {
+        pins {
+            pinmux = <STM32_PINMUX('F', 3, ANALOG)>, /* I2C5_SDA */
+                     <STM32_PINMUX('H', 13, ANALOG)>; /* I2C5_SCL */
+        };
+    };
+
+    psu_ctrl_pins_mx: psu-ctrl-0 {
+        pins {
+            pinmux = <STM32_PINMUX('H', 8, GPIO)>; /* PSU_EN_N */
+            bias-disable;
+            drive-push-pull;
+            slew-rate = <0>;
+        };
+    };
+
+    /* Fan tach pins */
+    fan_tach_pins_mx: fan-tach-0 {
+        pins {
+            pinmux = <STM32_PINMUX('F', 13, GPIO)>, /* FAN1_TACH */
+                     <STM32_PINMUX('F', 10, GPIO)>, /* FAN2_TACH */
+                     <STM32_PINMUX('A', 3, GPIO)>,  /* FAN3_TACH */
+                     <STM32_PINMUX('A', 5, GPIO)>;  /* FAN4_TACH */
+            bias-pull-up;
+        };
+    };
+
+    /* Fan control pins */
+    tim16_pwm_pins_mx: tim16-pwm-0 {
+        pins {
+            pinmux = <STM32_PINMUX('F', 6, AF1)>; /* TIM16_CH1 - FAN1_PWM */
+            bias-disable;
+            drive-push-pull;
+            slew-rate = <0>;
+        };
+    };
+
+    tim16_pwm_sleep_pins_mx: tim16-pwm-sleep-0 {
+        pins {
+            pinmux = <STM32_PINMUX('F', 6, ANALOG)>; /* TIM16_CH1 */
+        };
+    };
+
+    tim17_pwm_pins_mx: tim17-pwm-0 {
+        pins {
+            pinmux = <STM32_PINMUX('G', 5, AF1)>; /* TIM17_CH1 - FAN2_PWM */
+            bias-disable;
+            drive-push-pull;
+            slew-rate = <0>;
+        };
+    };
+
+    tim17_pwm_sleep_pins_mx: tim17-pwm-sleep-0 {
+        pins {
+            pinmux = <STM32_PINMUX('G', 5, ANALOG)>; /* TIM17_CH1 */
+        };
+    };
+
+    tim13_pwm_pins_mx: tim13-pwm-0 {
+        pins {
+            pinmux = <STM32_PINMUX('A', 6, AF9)>; /* TIM13_CH1 - FAN3_PWM */
+            bias-disable;
+            drive-push-pull;
+            slew-rate = <0>;
+        };
+    };
+
+    tim13_pwm_sleep_pins_mx: tim13-pwm-sleep-0 {
+        pins {
+            pinmux = <STM32_PINMUX('A', 6, ANALOG)>; /* TIM13_CH1 */
+        };
+    };
+
+    tim14_pwm_pins_mx: tim14-pwm-0 {
+        pins {
+            pinmux = <STM32_PINMUX('F', 9, AF9)>; /* TIM14_CH1 - FAN4_PWM */
+            bias-disable;
+            drive-push-pull;
+            slew-rate = <0>;
+        };
+    };
+
+    tim14_pwm_sleep_pins_mx: tim14-pwm-sleep-0 {
+        pins {
+            pinmux = <STM32_PINMUX('F', 9, ANALOG)>; /* TIM14_CH1 */
+        };
+    };
+
+    /* USB Hub I2C3 */
+    i2c3_pins_mx: i2c3-0 {
+        pins {
+            pinmux = <STM32_PINMUX('H', 12, AF4)>, /* I2C3_SCL - USB_I2C3_SCL */
+                     <STM32_PINMUX('H', 14, AF4)>; /* I2C3_SDA - USB_I2C3_SDA */
+            bias-disable;
+            drive-open-drain;
+            slew-rate = <0>;
+        };
+    };
+
+    i2c3_sleep_pins_mx: i2c3-sleep-0 {
+        pins {
+            pinmux = <STM32_PINMUX('H', 12, ANALOG)>, /* I2C3_SCL */
+                     <STM32_PINMUX('H', 14, ANALOG)>; /* I2C3_SDA */
+        };
+    };
+
+    adc2_pins_mx: adc2_mx-0 {
+      pins {
+          pinmux = <STM32_PINMUX('C', 0, ANALOG)>; /* ADC2_INP0 */
+      };
+    };
+};

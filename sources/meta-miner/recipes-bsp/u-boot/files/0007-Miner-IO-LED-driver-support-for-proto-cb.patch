@@ -1,0 +1,1067 @@
+From c7ac6c4aebe7103742489d623a6532954575829c Mon Sep 17 00:00:00 2001
+From: BTCM SW Team <btcm-sw-team@squareup.com>
+Date: Mon, 26 May 2025 15:23:57 -0400
+Subject: [PATCH 07/17] Miner IO LED driver support for proto cb
+
+%% original patch: 0001-Miner-IO-LED-driver-support-for-proto-cb.patch
+---
+ board/st/stm32mp1/stm32mp1.c    |  64 +++-
+ drivers/led/Kconfig             |   6 +
+ drivers/led/Makefile            |   1 +
+ drivers/led/led-uclass.c        |  12 +
+ drivers/led/led_miner_io.c      | 628 ++++++++++++++++++++++++++++++++
+ include/led.h                   |  38 ++
+ include/linux/map_to_7segment.h | 179 +++++++++
+ 7 files changed, 913 insertions(+), 15 deletions(-)
+ create mode 100644 drivers/led/led_miner_io.c
+ create mode 100644 include/linux/map_to_7segment.h
+
+diff --git a/board/st/stm32mp1/stm32mp1.c b/board/st/stm32mp1/stm32mp1.c
+index 409c12cff23..d14c917fe35 100644
+--- a/board/st/stm32mp1/stm32mp1.c
++++ b/board/st/stm32mp1/stm32mp1.c
+@@ -51,6 +51,7 @@
+ #include <tee/optee.h>
+ #include <usb/dwc2_udc.h>
+ #include <button.h>
++#include <dt-bindings/leds/common.h>
+ 
+ /* SYSCFG registers */
+ #define SYSCFG_BOOTR		0x00
+@@ -661,19 +662,50 @@ static void proto_cb_btn_check(void) {
+ 	}
+ }
+ 
+-static void proto_cb_board_prob_io_board(void) {
++static void proto_cb_board_probe_io_board(void) {
+ 	ofnode node;
+ 	struct gpio_desc io_board_id;
+ 
+ 	// If io_board_id exist, try to detect which IO board is attached
+ 	node = ofnode_path("/config");
+ 	if (gpio_request_by_name_nodev(node, "proto,io_board_id", 0, &io_board_id, GPIOD_IS_IN)) {
+-			log_debug("could not find a /config/proto,io_board_id\n");
++		log_err("could not find a /config/proto,io_board_id\n");
+ 		// There isn't IO Board ID to detect skip
+ 		return;
+ 	} else {
+-		io_board_type = dm_gpio_get_value(&io_board_id); 
+-		log_notice("IO board ID: %d\n", io_board_type);
++		int board_id = dm_gpio_get_value(&io_board_id);
++		switch (board_id) {
++			case 1:
++				gd->board_type = PROTO_IO_BOARD_RGB;
++				break;
++			default:
++				gd->board_type = PROTO_IO_BOARD_DEFAULT;
++				break;
++		}
++		log_notice("IO board ID: 0x%lx\n", gd->board_type);
++	}
++
++	// Clean up the LED device if the IO board type doesn't match
++	struct udevice* dev;
++	for (uclass_find_first_device(UCLASS_LED, &dev); dev; uclass_find_next_device(&dev)) {
++		struct led_uc_plat* plat = dev_get_uclass_plat(dev);
++		// If top level device, and device prefix with miner-io-led
++		if (!plat->label && strncmp(dev->name, "miner-io-led", 12) == 0) {
++			int io_board_type = dev_read_u32_default(dev, "io-board-type", gd->board_type);
++			// Check if the IO board type matches, if "io-board-type" is missing don't unbind
++			if (io_board_type != gd->board_type) {
++				log_info("Removing LED device %s as IO board type doesn't match\n", dev->name);
++				int ret = device_remove(dev, DM_REMOVE_NORMAL);
++				if (ret) {
++					log_err("Failed to remove device: %d\n", ret);
++				}
++				ret = device_unbind(dev);
++				if (ret) {
++					log_err("Failed to unbind device: %d\n", ret);
++				}
++				break;
++			}
++		}
+ 	}
+ }
+ 
+@@ -689,7 +721,13 @@ static void proto_cb_board_init(void) {
+ 
+ static void board_proto_cb_late_init(void)
+ {
+-	if (io_board_type == PROTO_IO_BOARD_RGB) {
++	if (env_get_yesno("factory_reset") == 1) {
++		// TODO: Implement factory reset
++	} else {
++		setup_led(LEDST_ON);
++	}
++
++	if (gd->board_type == PROTO_IO_BOARD_RGB) {
+ 		const char *io_rgb_conf = fdtdec_get_config_string(gd->fdt_blob, "u-boot,io-rgb-fdt");
+ 		char boot_conf[64];
+ 		snprintf(boot_conf, sizeof(boot_conf), "#conf-%s", io_rgb_conf);
+@@ -952,11 +990,6 @@ int board_init(void)
+ 	}
+ 
+ 	board_key_check();
+-	if (board_is_proto_cb()) {
+-		log_notice("Proto CB detected!\n");
+-		proto_cb_board_init();
+-		proto_cb_btn_check();
+-  }
+ 
+ 	regulators_enable_boot_on(_DEBUG);
+ 
+@@ -967,10 +1000,11 @@ int board_init(void)
+ 	if (IS_ENABLED(CONFIG_ARMV7_NONSEC))
+ 		sysconf_init();
+ 
+-	if (CONFIG_IS_ENABLED(LED))
+-		led_default_state();
+-
+-	setup_led(LEDST_ON);
++	if (board_is_proto_cb()) {
++		log_notice("Proto CB detected!\n");
++		proto_cb_board_init();
++		proto_cb_btn_check();
++	}
+ 
+ 	return 0;
+ }
+@@ -1046,7 +1080,7 @@ int board_late_init(void)
+ 
+ void board_quiesce_devices(void)
+ {
+-	setup_led(LEDST_OFF);
++	// setup_led(LEDST_OFF);
+ }
+ 
+ /* CLOCK feed to PHY*/
+diff --git a/drivers/led/Kconfig b/drivers/led/Kconfig
+index cc87fbf395b..2c00bd2ea0b 100644
+--- a/drivers/led/Kconfig
++++ b/drivers/led/Kconfig
+@@ -52,6 +52,12 @@ config LED_BLINK
+ 	  This option enables support for this which adds slightly to the
+ 	  code size.
+ 
++config LED_COLOR
++	bool "Support LED color"
++	depends on LED
++	help
++	  Some drivers can support setting the color of an LED.
++
+ config SPL_LED
+ 	bool "Enable LED support in SPL"
+ 	depends on SPL && SPL_DM
+diff --git a/drivers/led/Makefile b/drivers/led/Makefile
+index 8e3ae7f1465..fe54717fe3c 100644
+--- a/drivers/led/Makefile
++++ b/drivers/led/Makefile
+@@ -4,6 +4,7 @@
+ # Written by Simon Glass <sjg@chromium.org>
+ 
+ obj-y += led-uclass.o
++obj-y += led_miner_io.o
+ obj-$(CONFIG_LED_BCM6328) += led_bcm6328.o
+ obj-$(CONFIG_LED_BCM6358) += led_bcm6358.o
+ obj-$(CONFIG_LED_BCM6858) += led_bcm6858.o
+diff --git a/drivers/led/led-uclass.c b/drivers/led/led-uclass.c
+index 7e298dbb06f..0cfb62c61d2 100644
+--- a/drivers/led/led-uclass.c
++++ b/drivers/led/led-uclass.c
+@@ -44,6 +44,18 @@ int led_set_state(struct udevice *dev, enum led_state_t state)
+ 	return ops->set_state(dev, state);
+ }
+ 
++#ifdef CONFIG_LED_COLOR
++int led_set_color(struct udevice* dev, u32 color_mask, u32 color_val)
++{
++	struct led_ops* ops = led_get_ops(dev);
++
++	if (!ops->set_color)
++		return -ENOSYS;
++
++	return ops->set_color(dev, color_mask, color_val);
++}
++#endif
++
+ enum led_state_t led_get_state(struct udevice *dev)
+ {
+ 	struct led_ops *ops = led_get_ops(dev);
+diff --git a/drivers/led/led_miner_io.c b/drivers/led/led_miner_io.c
+new file mode 100644
+index 00000000000..755fc19b002
+--- /dev/null
++++ b/drivers/led/led_miner_io.c
+@@ -0,0 +1,628 @@
++#include <asm/global_data.h>
++#include <asm/io.h>
++#include <dm/device_compat.h>
++#include <dm/device-internal.h>
++#include <dm/devres.h>
++#include <linux/bitops.h>
++#include <linux/map_to_7segment.h>
++#include <common.h>
++#include <dm.h>
++#include <errno.h>
++#include <led.h>
++#include <log.h>
++#include <spi.h>
++
++/*
++ * Timing as per WS2811 datasheet
++ * Line encoding:
++ *    Logical 0: high for short time (t0H), low for long time (t0L)
++ *    Logical 1: high for long time (t1H), low for long time (t1L)
++ *    Logical Reset: low for very long time (tRL)
++ *    (t0H, t0L, t1H, t1L; tRL) = (~300ns, ~790ns, ~790ns, ~790ns; >280us)
++ *    For simplicity, we round to closest multiple of 400ns:
++ *    (t0H, t0L, t1H, t1L; tRL) = (400ns, 800ns, 800ns, 800ns; 281.6us)
++ *    Shortest line encoding time is t0H, or 400ns
++ *    As expressed in terms of t0H: (t0H, 2*t0H, 2*t0H, 2*t0H, 704*t0H)
++ *
++ * SPI clk
++ *    We need 1 SPI clk cycle to be fast enough for t0H (400ns)
++ *    1 cyc / 400ns = 2.5MHz
++ *    SPI clk must be 2.5MHz or a multiple of this -> call the multiple 'm'
++ *    Then t0H = 1cyc * m
++ *        E.g. if spi_clk is 10MHz (m = 4), then t0H = 4cyc
++ *
++ * SPI output
++ *    Recall  (t0H, t0L, t1H, t1L; tRL) = (t0H, 2*t0H, 2*t0H, 2*t0H; 704*t0H);  t0H = 1cyc
++ *            (t0H, t0L, t1H, t1L; tRL) = (1cyc, 2cyc, 2cyc, 2cyc; 704cyc)
++ *            (t0H, t0L, t1H, t1L; tRL) = (m*1cyc, m*2cyc, m*2cyc, m*2cyc; m*704cyc) if m >= 1
++ *    Logical 0:  1cyc high, 2 cyc low (multiply all by m if needed)
++ *        Looks like: 0b100 for m=1, 0b110000 for m=2, etc.
++ *    Logical 1:  2cyc high, 2 cyc low (multiply all by m if needed)
++ *        Looks like: 0b1100 for m=1, 0b11110000 for m=2, etc.
++ *    Logical Reset: 704cyc low (multiply by m if needed)
++ *        Looks like: 0b[703:0] = {0}, 0b[1407:0] = {0}, etc.
++ */
++
++// SPI clock must have this minimum speed
++#define SPI_CLK_MIN_HZ 2500000  // 2.5MHz
++
++// This multiple depends on clk connected to device (2.5MHz, 5MHz, 7.5MHz... etc.)
++#define SPI_CLK_MULT 1  // C3 uses PLL4Q = 2.5MHz
++#define SPI_HZ       (SPI_CLK_MIN_HZ * SPI_CLK_MULT)
++
++// Number of physical SPI bits (clk cyc) for each logical bit
++#define LOGICAL_0_HI_NUM_SPI_BITS  (1 * SPI_CLK_MULT)
++#define LOGICAL_0_LO_NUM_SPI_BITS  (2 * SPI_CLK_MULT)
++#define LOGICAL_1_HI_NUM_SPI_BITS  (2 * SPI_CLK_MULT)
++#define LOGICAL_1_LO_NUM_SPI_BITS  (2 * SPI_CLK_MULT)
++#define LOGICAL_RESET_NUM_SPI_BITS (704 * SPI_CLK_MULT)
++
++#define NUM_BITS_ZERO (LOGICAL_0_HI_NUM_SPI_BITS + LOGICAL_0_LO_NUM_SPI_BITS)
++#define NUM_BITS_ONE  (LOGICAL_1_HI_NUM_SPI_BITS + LOGICAL_1_LO_NUM_SPI_BITS)
++
++// Since logical 0/1 are of different physical bit sizes
++#define MAX(a, b)           (((a) > (b)) ? (a) : (b))
++#define MIN(a, b)           (((a) < (b)) ? (a) : (b))
++#define MAX_BITS_PER_SYMBOL MAX(NUM_BITS_ZERO, NUM_BITS_ONE)
++#define MIN_BITS_PER_SYMBOL MIN(NUM_BITS_ZERO, NUM_BITS_ONE)
++
++// Always 8 logical bits for each LED
++#define LOGICAL_BITS_PER_LED (8)
++#define MAX_BITS_PER_LED     (MAX(NUM_BITS_ZERO, NUM_BITS_ONE) * LOGICAL_BITS_PER_LED)
++#define MAX_BYTES_PER_LED    ((MAX_BITS_PER_LED + 1) / LOGICAL_BITS_PER_LED)
++
++#define MOST_SIGNIFICANT_BIT (0b10000000)
++
++#define MAX_SEGMENTS        (8)  // a, b, c, d, e, f, g, p
++#define MAX_BRIGHTNESS      (255)
++#define MAX_CHANNEL_PER_LED (3)
++#define DEFAULT_BRIGHTNESS  (100)
++
++SEG7_DEFAULT_MAP(seg_display_mapping);
++
++struct ws2811_priv;
++
++struct ws2811_channel {
++  u32 led_id;
++  u32 led_offset;
++  u8 val;
++  u8 buf[MAX_BYTES_PER_LED];
++};
++
++struct ws2811_led {
++  struct ws2811_channel channels[MAX_CHANNEL_PER_LED];
++  int channel_colors[MAX_CHANNEL_PER_LED];
++  u32 channel_count;
++};
++
++struct ws2811_seg_display {
++  int mapping;
++  char value;
++  struct ws2811_channel segments[MAX_SEGMENTS];
++  int num_segments;
++  u32 brightness;
++};
++
++struct ws2811_priv {
++  struct udevice* dev;
++  u32 default_color_index[MAX_CHANNEL_PER_LED];
++  int default_color_count;
++
++  struct ws2811_led* leds;
++  u32 num_leds;
++
++  struct ws2811_seg_display* seg_displays;
++  u32 num_seg_displays;
++
++  // Allocated output buffer for writing final data out over spi buffer
++  u8* buf;
++  size_t buf_len;
++
++  // Ordered pointer to each WS2811 node's led channels
++  struct ws2811_channel** channels;
++  u32 num_channels;
++
++  // Total number of WS2811 chips used in the chain
++  u32 num_nodes;
++};
++
++/*
++ * Helper function: Append a single bit into a byte buffer.
++ * bit_pos is the current bit index in the output stream.
++ * Increases rel_bit_pos so this function can be called sequentially.
++ */
++static inline void append_bit(u8* base_addr, u32* rel_bit_pos, int bit_val) {
++  int i;
++  // Loop takes care of pulse stretching
++  for (i = 0; i < SPI_CLK_MULT; i++) {
++    u8* byte_addr = base_addr + (*rel_bit_pos / 8);
++    int bit_idx = *rel_bit_pos % 8;
++    if (bit_val) {
++      *byte_addr |= (MOST_SIGNIFICANT_BIT >> bit_idx);
++    } else {
++      *byte_addr &= ~(MOST_SIGNIFICANT_BIT >> bit_idx);
++    }
++    // Increment relative bit pointer
++    (*rel_bit_pos)++;
++  }
++}
++
++static int ws2811_refresh(struct ws2811_priv* priv) {
++  int i, j, ret;
++  u8* byte_addr;
++  u32 bit_offset = 0;  // Relative bit position from byte_addr
++  struct udevice* dev = priv->dev;
++
++  byte_addr = priv->buf + (LOGICAL_RESET_NUM_SPI_BITS / 8);
++
++  for (i = 0; i < priv->num_channels; i++) {
++    struct ws2811_channel* channel = priv->channels[i];
++    u8 val = 0;
++    if (channel) {
++      val = channel->val;
++    }
++
++    // Encode each bit of brightness (MSb first)
++    for (j = LOGICAL_BITS_PER_LED - 1; j >= 0; j--) {
++      if (val & (1 << j)) {
++        // Logical '1' -> append 0b1100 (4 bits)
++        append_bit(byte_addr, &bit_offset, 1);
++        append_bit(byte_addr, &bit_offset, 1);
++        append_bit(byte_addr, &bit_offset, 0);
++        append_bit(byte_addr, &bit_offset, 0);
++      } else {
++        // Logical '0' -> append 0b100 (3 bits)
++        append_bit(byte_addr, &bit_offset, 1);
++        append_bit(byte_addr, &bit_offset, 0);
++        append_bit(byte_addr, &bit_offset, 0);
++      }
++    }
++  }
++
++  // Claim the bus
++  ret = dm_spi_claim_bus(priv->dev);
++  if (ret) {
++    dev_err(dev, "Failed to claim SPI bus: %d\n", ret);
++    return ret;
++  }
++
++  ret = dm_spi_xfer(priv->dev, priv->buf_len * 8, priv->buf, NULL, SPI_XFER_BEGIN | SPI_XFER_END);
++  if (ret) {
++    dev_err(dev, "SPI transfer failed: %d\n", ret);
++  }
++
++  // Release the bus
++  dm_spi_release_bus(priv->dev);
++
++  return ret;
++}
++
++static enum led_state_t miner_io_led_get_state(struct udevice* dev) {
++  struct led_uc_plat* uc_plat = dev_get_uclass_plat(dev);
++  if (!uc_plat->label) {
++    return LEDST_OFF;
++  }
++
++  enum led_state_t state = LEDST_OFF;
++  if (strcmp(dev->name, "7seg") == 0) {
++    struct ws2811_seg_display* seg_display = dev_get_priv(dev);
++    state = seg_display->value;
++  } else {
++    struct ws2811_led* led = dev_get_priv(dev);
++    for (int i = 0; i < led->channel_count; i++) {
++      if (led->channels[i].val > 0) {
++        state = LEDST_ON;
++        break;
++      }
++    }
++  }
++
++  return state;
++}
++
++static int miner_io_led_set_seg_display_state(struct udevice* dev, enum led_state_t state) {
++  struct ws2811_seg_display* seg_display = dev_get_priv(dev);
++  int i;
++
++  // LEDST_ON and LEDST_OFF turn on/off the display via changing brightness 
++  // without changing the mapping value
++  if (state == LEDST_ON) {
++    seg_display->brightness = DEFAULT_BRIGHTNESS;
++  } else if (state == LEDST_OFF) {
++    seg_display->brightness = 0;
++  } else {
++    // If any other value treat it as a character
++    seg_display->value = (char)state;
++    int ret = map_to_seg7(&seg_display_mapping, seg_display->value);
++    seg_display->mapping = ret > 0 ? ret : 0;
++    seg_display->brightness = ret > 0 ? DEFAULT_BRIGHTNESS : 0;
++  }
++
++  // Update record of LED value
++  for (i = 0; i < sizeof(seg_display->segments) / sizeof(seg_display->segments[0]); i++) {
++    seg_display->segments[i].val =
++      (seg_display->mapping & (1 << i)) > 0 ? seg_display->brightness: 0;
++  }
++  return 0;
++}
++
++static int miner_io_led_set_state(struct udevice* dev, enum led_state_t state) {
++  struct led_uc_plat* uc_plat = dev_get_uclass_plat(dev);
++  if (!uc_plat->label) {
++    return 0;
++  }
++
++  if (strcmp(dev->name, "7seg") == 0) {
++    miner_io_led_set_seg_display_state(dev, state);
++  } else if (strstr(dev->name, "led@") == dev->name) {
++    struct ws2811_led* led = dev_get_priv(dev);
++    for (int i = 0; i < led->channel_count; i++) {
++      led->channels[i].val = state == LEDST_ON ? DEFAULT_BRIGHTNESS : 0;
++    }
++  }
++
++  struct ws2811_priv* root = dev_get_priv(dev_get_parent(dev));
++  ws2811_refresh(root);
++  return 0;
++}
++
++#ifdef CONFIG_LED_COLOR
++static int miner_io_led_set_color(struct udevice* dev, u32 color_mask, u32 color_val) {
++  struct led_uc_plat* uc_plat = dev_get_uclass_plat(dev);
++  if (!uc_plat->label) {
++    return 0;
++  }
++
++  dev_dbg(dev, "set_color: %s, %d %p\n", dev->name, color_mask, dev_get_priv(dev));
++  if (strcmp(dev->name, "7seg") == 0) {
++    return -EINVAL;
++  }
++
++  struct ws2811_led* led = dev_get_priv(dev);
++  for (int i = 0; i < led->channel_count; i++) {
++    if (((1 << led->channel_colors[i]) & color_mask) > 0) {
++      led->channels[i].val = color_val;
++    } else {
++      led->channels[i].val = 0;
++    }
++  }
++  struct ws2811_priv* root = dev_get_priv(dev_get_parent(dev));
++  ws2811_refresh(root);
++  return 0;
++}
++#endif
++
++static const struct led_ops miner_io_led_ops = {
++  .get_state = miner_io_led_get_state,
++  .set_state = miner_io_led_set_state,
++#ifdef CONFIG_LED_COLOR
++  .set_color = miner_io_led_set_color,
++#endif
++};
++
++// Parse the DTS to figure out how many nodes are in the chain
++// and later how much memory to allocate for.
++static int miner_id_led_parse_dts(struct udevice* dev) {
++  struct udevice* child;
++  int ret;
++  struct ws2811_priv* priv = dev_get_priv(dev);
++
++  dev_dbg(dev, "(%p) priv->dev: %s\n", priv, dev->name);
++
++  priv->dev = dev;
++  priv->num_leds = 0;
++  priv->num_seg_displays = 0;
++  priv->default_color_count = 0;
++
++  priv->default_color_count = dev_read_size(dev, "default-colors") / sizeof(u32);
++  ret =
++    dev_read_u32_array(dev, "default-colors", priv->default_color_index, priv->default_color_count);
++  if (ret) {
++    dev_err(dev, "Failed to read default-colors property count (%d): %d\n",
++            priv->default_color_count, ret);
++  }
++
++  device_find_first_child(dev, &child);
++  // Iterate through all child devices
++  while (child) {
++    u32 reg[2];
++
++    if (!strcmp(child->name, "7seg")) {
++      struct udevice* seg_child;
++      device_find_first_child(child, &seg_child);
++      while (seg_child) {
++        dev_dbg(dev, "Found 7seg child device: %s\n", seg_child->name);
++        ret = dev_read_u32_array(seg_child, "reg", reg, 2);
++        if (ret) {
++          dev_err(dev, "Failed to read reg property from %s: %d\n", seg_child->name, ret);
++          return ret;
++        }
++        // Figure out how many nodes are in the chain
++        if (reg[0] > priv->num_nodes) {
++          priv->num_nodes = reg[0];
++        }
++        dev_dbg(dev, "7seg child %s reg: [%d, %d]\n", seg_child->name, reg[0], reg[1]);
++        device_find_next_child(&seg_child);
++        priv->num_leds++;
++      }
++      priv->num_seg_displays++;
++    } else if (strstr(child->name, "led") == child->name) {
++      ret = dev_read_u32_array(child, "reg", reg, 2);
++      if (ret) {
++        dev_err(dev, "Failed to read reg property from %s: %d\n", child->name, ret);
++        return ret;
++      }
++      // Figure out how many nodes are in the chain
++      if (reg[0] > priv->num_nodes) {
++        priv->num_nodes = reg[0];
++      }
++      priv->num_leds++;
++    }
++    // Process each child device
++    dev_dbg(dev, "Found child device: %s\n", child->name);
++    device_find_next_child(&child);
++  }
++
++  priv->num_nodes += 1;
++  priv->num_channels = priv->num_nodes * MAX_CHANNEL_PER_LED;
++
++  dev_dbg(dev, "Found %d nodes\n", priv->num_nodes);
++  dev_dbg(dev, "Found %d leds\n", priv->num_leds);
++  dev_dbg(dev, "Found %d seg_displays\n", priv->num_seg_displays);
++
++  return 0;
++}
++
++static int miner_id_led_alloc_mem(struct udevice* dev) {
++  struct ws2811_priv* priv = dev_get_priv(dev);
++
++  dev_dbg(dev, "alloc num_channels: %d\n", priv->num_channels);
++  priv->buf_len = (LOGICAL_RESET_NUM_SPI_BITS +
++                   (priv->num_channels * LOGICAL_BITS_PER_LED * MAX_BITS_PER_SYMBOL)) /
++                  8;              // Divide by 8 to get bytes.
++  priv->buf_len *= SPI_CLK_MULT;  // In cases where a faster clock is used
++
++  dev_dbg(dev, "alloc buff: %d\n", priv->buf_len);
++  priv->buf = devm_kzalloc(dev, priv->buf_len, GFP_KERNEL);
++  if (!priv->buf) {
++    dev_err(dev, "Failed buffer len\n");
++    return -ENOMEM;
++  }
++
++  dev_dbg(dev, "alloc channels: %d\n", priv->num_channels);
++  priv->channels =
++    devm_kcalloc(dev, priv->num_channels, sizeof(struct ws2811_channel*), GFP_KERNEL);
++  if (!priv->channels) {
++    dev_err(dev, "Failed allocate channels buff\n");
++    return -ENOMEM;
++  }
++
++  dev_dbg(dev, "alloc seg_displays: %d\n", priv->num_seg_displays);
++  if (priv->num_seg_displays) {
++    priv->seg_displays =
++      devm_kcalloc(dev, priv->num_seg_displays, sizeof(*priv->seg_displays), GFP_KERNEL);
++    if (!priv->seg_displays) {
++      dev_err(dev, "Failed allocate seg display\n");
++      return -ENOMEM;
++    }
++  }
++
++  dev_dbg(dev, "alloc leds: %d\n", priv->num_leds);
++  if (priv->num_leds) {
++    priv->leds = devm_kcalloc(dev, priv->num_leds, sizeof(*priv->leds), GFP_KERNEL);
++    if (!priv->leds) {
++      dev_err(dev, "Failed allocate singles\n");
++      return -ENOMEM;
++    }
++  }
++
++  return 0;
++}
++
++static int miner_id_led_init(struct udevice* dev) {
++  struct ws2811_priv* priv = dev_get_priv(dev);
++  struct udevice* child;
++  int ret;
++  u32 seg_display_idx = 0;
++  u32 led_idx = 0;
++
++  device_find_first_child(dev, &child);
++  while (child) {
++    u32 reg[2];
++
++    // Check if node is prefixed with 7seg
++    if (!strcmp(child->name, "7seg")) {
++      u32 segment_idx = 0;
++      struct ws2811_seg_display* seg_display = &priv->seg_displays[seg_display_idx];
++
++      // Set display struct to priv of device
++      dev_set_priv(child, seg_display);
++      // Need to traverse the FDT manually since we didn't bind the individual segment leds
++      ofnode node;
++
++      dev_for_each_subnode(node, child) {
++        dev_dbg(dev, "Init 7seg child device: %s\n", ofnode_get_name(node));
++        struct ws2811_channel* channel = &seg_display->segments[segment_idx];
++        ret = ofnode_read_u32_array(node, "reg", reg, 2);
++        if (ret) {
++          dev_err(dev, "Failed to read reg property from %s: %d\n", ofnode_get_name(node), ret);
++          continue;
++        }
++
++        channel->led_id = reg[0];
++        channel->led_offset = reg[1];
++        segment_idx++;
++
++        priv->channels[reg[0] * MAX_CHANNEL_PER_LED + reg[1]] = channel;
++        seg_display_idx++;
++      }
++    } else if (strstr(child->name, "led@") == child->name) {  // prefix with led@
++      u32 channel_idx;
++      int i, channel_count;
++      struct ws2811_channel* chan;
++      struct ws2811_led* led = &priv->leds[led_idx];
++
++      dev_set_priv(child, led);
++      dev_dbg(dev, "Init led device: %s %p\n", child->name, dev_get_priv(child));
++
++      // Get LED ID and offset value
++      ret = dev_read_u32_array(child, "reg", reg, 2);
++      if (ret) {
++        dev_err(dev, "Failed to read reg property from %s: %d\n", child->name, ret);
++        continue;
++      }
++
++      // Figure out the start of channel index
++      channel_idx = reg[0] * MAX_CHANNEL_PER_LED + reg[1];
++
++      channel_count = dev_read_size(child, "colors");
++      if (channel_count < 0) {
++        channel_count = 0;
++      }
++      channel_count = channel_count / sizeof(u32);
++
++      if (channel_count > MAX_CHANNEL_PER_LED) {
++        dev_err(dev, "%s provided %d channel colors. Can't support more than %d!\n", child->name,
++                channel_count, MAX_CHANNEL_PER_LED);
++        // Use the default color index
++        channel_count = 0;
++      } else if (channel_count > 0) {
++        ret = dev_read_u32_array(child, "colors", led->channel_colors, channel_count);
++        if (ret) {
++          dev_err(dev, "Failed to read colors property from %s: %d\n", child->name, ret);
++          // Use the default color index
++          channel_count = 0;
++        }
++      }
++
++      // if colors is NOT provided, try to use the default_color_index
++      if (channel_count == 0) {
++        if (priv->default_color_count > 0) {
++          channel_count = priv->default_color_count;
++          for (i = 0; i < channel_count; i++) {
++            led->channel_colors[i] = priv->default_color_index[i];
++          }
++        } else {
++          dev_err(dev, "Missing channel colors for %s!\n", child->name);
++        }
++      }
++
++      if (channel_count > 0) {
++        // Init color channels
++        for (i = 0; i < channel_count; i++) {
++          chan = &priv->leds[led_idx].channels[i];
++          chan->led_id = reg[0];
++          chan->led_offset = i;
++
++          // Map channel into Ordered channel mapping
++          priv->channels[channel_idx + i] = chan;
++        }
++        priv->leds[led_idx].channel_count = channel_count;
++      }
++      led_idx++;
++    }
++    device_find_next_child(&child);
++  }
++  return 0;
++}
++
++static int miner_io_led_probe(struct udevice* dev) {
++  int ret;
++
++  struct led_uc_plat* uc_plat = dev_get_uclass_plat(dev);
++
++  /* Ignore probe for sub node */
++  if (uc_plat->label) {
++    dev_dbg(dev, "Ignore probe for sub node %s %s %p\n", uc_plat->label, dev->name,
++             dev_get_priv(dev));
++    return 0;
++  } else {
++    struct ws2811_priv* priv = devm_kzalloc(dev, sizeof(struct ws2811_priv), GFP_KERNEL);
++    if (!priv) {
++      dev_err(dev, "Failed to allocate priv\n");
++      return -ENOMEM;
++    }
++    dev_set_priv(dev, priv);
++  }
++
++  ret = miner_id_led_parse_dts(dev);
++  if (ret) {
++    dev_err(dev, "Failed to parse DTS: %d\n", ret);
++    return ret;
++  }
++
++  dev_dbg(dev, "start alloc mem\n");
++  ret = miner_id_led_alloc_mem(dev);
++  if (ret) {
++    dev_err(dev, "Failed to allocate memory: %d\n", ret);
++    return ret;
++  }
++
++  dev_dbg(dev, "start init\n");
++  ret = miner_id_led_init(dev);
++  if (ret) {
++    dev_err(dev, "Failed to initialize LEDs: %d\n", ret);
++    return ret;
++  }
++  dev_dbg(dev, "Done probing\n");
++
++  return 0;
++}
++
++static int miner_io_led_unbind(struct udevice* dev) {
++  dev_dbg(dev, "unbind %s\n", dev->name);
++  return 0;
++}
++
++static int miner_io_led_remove(struct udevice* dev) {
++  dev_dbg(dev, "remove %s\n", dev->name);
++  return 0;
++}
++
++static int miner_io_led_bind(struct udevice* parent) {
++  ofnode node;
++
++  if (strcmp(parent->name, "7seg") == 0) {
++    dev_dbg(parent, "Ignore 7seg sub node\n");
++    return 0;
++  }
++
++  dev_for_each_subnode(node, parent) {
++    struct led_uc_plat* uc_plat;
++    struct udevice* dev;
++    const char* label;
++    int ret;
++
++    label = ofnode_read_string(node, "label");
++    if (!label) {
++      dev_err(parent, "%s: node %s has no label\n", __func__, ofnode_get_name(node));
++      return -EINVAL;
++    }
++
++    ret = device_bind_driver_to_node(parent, "miner-io-leds", ofnode_get_name(node), node, &dev);
++    if (ret) {
++      dev_err(parent, "%s: binding %s failed\n", __func__, ofnode_get_name(node));
++      return ret;
++    }
++
++    uc_plat = dev_get_uclass_plat(dev);
++    uc_plat->label = label;
++    dev_dbg(dev, "uc_plat %s; bind %s\n", uc_plat->label, dev->name);
++  }
++
++  return 0;
++}
++
++static const struct udevice_id ws2811_dev_tree_ids[] = {{.compatible = "worldsemi,ws2811f"},
++                                                        {/* sentinel */}};
++
++U_BOOT_DRIVER(miner_io_led_driver) = {
++  .name = "miner-io-leds",
++  .id = UCLASS_LED,
++  .of_match = ws2811_dev_tree_ids,
++  .bind = miner_io_led_bind,
++  .unbind = miner_io_led_unbind,
++  .probe = miner_io_led_probe,
++  .remove = miner_io_led_remove,
++  .ops = &miner_io_led_ops,
++};
+diff --git a/include/led.h b/include/led.h
+index 02766fa56fb..b910676d2f4 100644
+--- a/include/led.h
++++ b/include/led.h
+@@ -48,6 +48,26 @@ struct led_ops {
+ 	 */
+ 	int (*set_state)(struct udevice *dev, enum led_state_t state);
+ 
++	/**
++	 * refresh() - refresh the LED state
++	 *
++	 * @dev:	LED device to change
++	 * @return 0 if OK, -ve on error
++	 */
++	int (*refresh)(struct udevice *dev);
++
++#ifdef CONFIG_LED_COLOR
++	/**
++	 * set_color() - set the color of an LED
++	 *
++	 * @dev:	LED device to change
++	 * @color_mask:	LED color mask
++	 * @color_val:	LED color value
++	 * @return 0 if OK, -ve on error
++	 */
++	int (*set_color)(struct udevice *dev, u32 color_mask, u32 color_val);
++#endif
++
+ 	/**
+ 	 * led_get_state() - get the state of an LED
+ 	 *
+@@ -91,6 +111,24 @@ int led_get_by_label(const char *label, struct udevice **devp);
+  */
+ int led_set_state(struct udevice *dev, enum led_state_t state);
+ 
++/**
++ * led_set_color() - set the color of an LED
++ *
++ * @dev:	LED device to change
++ * @color_index:	LED color index
++ * @color_val:	LED color value
++ * @return 0 if OK, -ve on error
++ */
++int led_set_color(struct udevice *dev, u32 color_index, u32 color_val);
++
++/**
++ * led_refresh() - refresh the LED state
++ *
++ * @dev:	LED device to change
++ * @return 0 if OK, -ve on error
++ */
++int led_refresh(struct udevice *dev);
++
+ /**
+  * led_get_state() - get the state of an LED
+  *
+diff --git a/include/linux/map_to_7segment.h b/include/linux/map_to_7segment.h
+new file mode 100644
+index 00000000000..04c8b55812e
+--- /dev/null
++++ b/include/linux/map_to_7segment.h
+@@ -0,0 +1,179 @@
++/* SPDX-License-Identifier: GPL-2.0+ WITH Linux-syscall-note */
++/*
++ * Copyright (c) 2005 Henk Vergonet <Henk.Vergonet@gmail.com>
++ */
++
++#ifndef MAP_TO_7SEGMENT_H
++#define MAP_TO_7SEGMENT_H
++
++/* This file provides translation primitives and tables for the conversion
++ * of (ASCII) characters to a 7-segments notation.
++ *
++ * The 7 segment's wikipedia notation below is used as standard.
++ * See: https://en.wikipedia.org/wiki/Seven_segment_display
++ *
++ * Notation:	+-a-+
++ *		f   b
++ *		+-g-+
++ *		e   c
++ *		+-d-+
++ *
++ * Usage:
++ *
++ *   Register a map variable, and fill it with a character set:
++ *	static SEG7_DEFAULT_MAP(map_seg7);
++ *
++ *
++ *   Then use for conversion:
++ *	seg7 = map_to_seg7(&map_seg7, some_char);
++ *	...
++ *
++ * In device drivers it is recommended, if required, to make the char map
++ * accessible via the sysfs interface using the following scheme:
++ *
++ * static ssize_t map_seg7_show(struct device *dev,
++ *				struct device_attribute *attr, char *buf)
++ * {
++ *	memcpy(buf, &map_seg7, sizeof(map_seg7));
++ *	return sizeof(map_seg7);
++ * }
++ * static ssize_t map_seg7_store(struct device *dev,
++ *				 struct device_attribute *attr, const char *buf,
++ *				 size_t cnt)
++ * {
++ *	if(cnt != sizeof(map_seg7))
++ *		return -EINVAL;
++ *	memcpy(&map_seg7, buf, cnt);
++ *	return cnt;
++ * }
++ * static DEVICE_ATTR_RW(map_seg7);
++ *
++ * History:
++ * 2005-05-31	RFC linux-kernel@vger.kernel.org
++ */
++#include <linux/errno.h>
++
++
++#define BIT_SEG7_A		0
++#define BIT_SEG7_B		1
++#define BIT_SEG7_C		2
++#define BIT_SEG7_D		3
++#define BIT_SEG7_E		4
++#define BIT_SEG7_F		5
++#define BIT_SEG7_G		6
++#define BIT_SEG7_RESERVED	7
++
++struct seg7_conversion_map {
++	unsigned char	table[128];
++};
++
++static __inline__ int map_to_seg7(struct seg7_conversion_map *map, int c)
++{
++	return c >= 0 && c < sizeof(map->table) ? map->table[c] : -EINVAL;
++}
++
++#define SEG7_CONVERSION_MAP(_name, _map)	\
++	struct seg7_conversion_map _name = { .table = { _map } }
++
++/*
++ * It is recommended to use a facility that allows user space to redefine
++ * custom character sets for LCD devices. Please use a sysfs interface
++ * as described above.
++ */
++#define MAP_TO_SEG7_SYSFS_FILE	"map_seg7"
++
++/*******************************************************************************
++ * ASCII conversion table
++ ******************************************************************************/
++
++#define _SEG7(l,a,b,c,d,e,f,g)	\
++      (	a<<BIT_SEG7_A |	b<<BIT_SEG7_B |	c<<BIT_SEG7_C |	d<<BIT_SEG7_D |	\
++	e<<BIT_SEG7_E |	f<<BIT_SEG7_F |	g<<BIT_SEG7_G )
++
++#define _MAP_0_32_ASCII_SEG7_NON_PRINTABLE	\
++	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
++
++#define _MAP_33_47_ASCII_SEG7_SYMBOL		\
++ _SEG7('!',0,0,0,0,1,1,0), _SEG7('"',0,1,0,0,0,1,0), _SEG7('#',0,1,1,0,1,1,0),\
++ _SEG7('$',1,0,1,1,0,1,1), _SEG7('%',0,0,1,0,0,1,0), _SEG7('&',1,0,1,1,1,1,1),\
++ _SEG7('\'',0,0,0,0,0,1,0),_SEG7('(',1,0,0,1,1,1,0), _SEG7(')',1,1,1,1,0,0,0),\
++ _SEG7('*',0,1,1,0,1,1,1), _SEG7('+',0,1,1,0,0,0,1), _SEG7(',',0,0,0,0,1,0,0),\
++ _SEG7('-',0,0,0,0,0,0,1), _SEG7('.',0,0,0,0,1,0,0), _SEG7('/',0,1,0,0,1,0,1),
++
++#define _MAP_48_57_ASCII_SEG7_NUMERIC		\
++ _SEG7('0',1,1,1,1,1,1,0), _SEG7('1',0,1,1,0,0,0,0), _SEG7('2',1,1,0,1,1,0,1),\
++ _SEG7('3',1,1,1,1,0,0,1), _SEG7('4',0,1,1,0,0,1,1), _SEG7('5',1,0,1,1,0,1,1),\
++ _SEG7('6',1,0,1,1,1,1,1), _SEG7('7',1,1,1,0,0,0,0), _SEG7('8',1,1,1,1,1,1,1),\
++ _SEG7('9',1,1,1,1,0,1,1),
++
++#define _MAP_58_64_ASCII_SEG7_SYMBOL		\
++ _SEG7(':',0,0,0,1,0,0,1), _SEG7(';',0,0,0,1,0,0,1), _SEG7('<',1,0,0,0,0,1,1),\
++ _SEG7('=',0,0,0,1,0,0,1), _SEG7('>',1,1,0,0,0,0,1), _SEG7('?',1,1,1,0,0,1,0),\
++ _SEG7('@',1,1,0,1,1,1,1),
++
++#define _MAP_65_90_ASCII_SEG7_ALPHA_UPPR	\
++ _SEG7('A',1,1,1,0,1,1,1), _SEG7('B',1,1,1,1,1,1,1), _SEG7('C',1,0,0,1,1,1,0),\
++ _SEG7('D',1,1,1,1,1,1,0), _SEG7('E',1,0,0,1,1,1,1), _SEG7('F',1,0,0,0,1,1,1),\
++ _SEG7('G',1,1,1,1,0,1,1), _SEG7('H',0,1,1,0,1,1,1), _SEG7('I',0,1,1,0,0,0,0),\
++ _SEG7('J',0,1,1,1,0,0,0), _SEG7('K',0,1,1,0,1,1,1), _SEG7('L',0,0,0,1,1,1,0),\
++ _SEG7('M',1,1,1,0,1,1,0), _SEG7('N',1,1,1,0,1,1,0), _SEG7('O',1,1,1,1,1,1,0),\
++ _SEG7('P',1,1,0,0,1,1,1), _SEG7('Q',1,1,1,1,1,1,0), _SEG7('R',1,1,1,0,1,1,1),\
++ _SEG7('S',1,0,1,1,0,1,1), _SEG7('T',0,0,0,1,1,1,1), _SEG7('U',0,1,1,1,1,1,0),\
++ _SEG7('V',0,1,1,1,1,1,0), _SEG7('W',0,1,1,1,1,1,1), _SEG7('X',0,1,1,0,1,1,1),\
++ _SEG7('Y',0,1,1,0,0,1,1), _SEG7('Z',1,1,0,1,1,0,1),
++
++#define _MAP_91_96_ASCII_SEG7_SYMBOL		\
++ _SEG7('[',1,0,0,1,1,1,0), _SEG7('\\',0,0,1,0,0,1,1),_SEG7(']',1,1,1,1,0,0,0),\
++ _SEG7('^',1,1,0,0,0,1,0), _SEG7('_',0,0,0,1,0,0,0), _SEG7('`',0,1,0,0,0,0,0),
++
++#define _MAP_97_122_ASCII_SEG7_ALPHA_LOWER	\
++ _SEG7('A',1,1,1,0,1,1,1), _SEG7('b',0,0,1,1,1,1,1), _SEG7('c',0,0,0,1,1,0,1),\
++ _SEG7('d',0,1,1,1,1,0,1), _SEG7('E',1,0,0,1,1,1,1), _SEG7('F',1,0,0,0,1,1,1),\
++ _SEG7('G',1,1,1,1,0,1,1), _SEG7('h',0,0,1,0,1,1,1), _SEG7('i',0,0,1,0,0,0,0),\
++ _SEG7('j',0,0,1,1,0,0,0), _SEG7('k',0,0,1,0,1,1,1), _SEG7('L',0,0,0,1,1,1,0),\
++ _SEG7('M',1,1,1,0,1,1,0), _SEG7('n',0,0,1,0,1,0,1), _SEG7('o',0,0,1,1,1,0,1),\
++ _SEG7('P',1,1,0,0,1,1,1), _SEG7('q',1,1,1,0,0,1,1), _SEG7('r',0,0,0,0,1,0,1),\
++ _SEG7('S',1,0,1,1,0,1,1), _SEG7('T',0,0,0,1,1,1,1), _SEG7('u',0,0,1,1,1,0,0),\
++ _SEG7('v',0,0,1,1,1,0,0), _SEG7('W',0,1,1,1,1,1,1), _SEG7('X',0,1,1,0,1,1,1),\
++ _SEG7('y',0,1,1,1,0,1,1), _SEG7('Z',1,1,0,1,1,0,1),
++
++#define _MAP_123_126_ASCII_SEG7_SYMBOL		\
++ _SEG7('{',1,0,0,1,1,1,0), _SEG7('|',0,0,0,0,1,1,0), _SEG7('}',1,1,1,1,0,0,0),\
++ _SEG7('~',1,0,0,0,0,0,0),
++
++/* Maps */
++
++/* This set tries to map as close as possible to the visible characteristics
++ * of the ASCII symbol, lowercase and uppercase letters may differ in
++ * presentation on the display.
++ */
++#define MAP_ASCII7SEG_ALPHANUM			\
++	_MAP_0_32_ASCII_SEG7_NON_PRINTABLE	\
++	_MAP_33_47_ASCII_SEG7_SYMBOL		\
++	_MAP_48_57_ASCII_SEG7_NUMERIC		\
++	_MAP_58_64_ASCII_SEG7_SYMBOL		\
++	_MAP_65_90_ASCII_SEG7_ALPHA_UPPR	\
++	_MAP_91_96_ASCII_SEG7_SYMBOL		\
++	_MAP_97_122_ASCII_SEG7_ALPHA_LOWER	\
++	_MAP_123_126_ASCII_SEG7_SYMBOL
++
++/* This set tries to map as close as possible to the symbolic characteristics
++ * of the ASCII character for maximum discrimination.
++ * For now this means all alpha chars are in lower case representations.
++ * (This for example facilitates the use of hex numbers with uppercase input.)
++ */
++#define MAP_ASCII7SEG_ALPHANUM_LC			\
++	_MAP_0_32_ASCII_SEG7_NON_PRINTABLE	\
++	_MAP_33_47_ASCII_SEG7_SYMBOL		\
++	_MAP_48_57_ASCII_SEG7_NUMERIC		\
++	_MAP_58_64_ASCII_SEG7_SYMBOL		\
++	_MAP_97_122_ASCII_SEG7_ALPHA_LOWER	\
++	_MAP_91_96_ASCII_SEG7_SYMBOL		\
++	_MAP_97_122_ASCII_SEG7_ALPHA_LOWER	\
++	_MAP_123_126_ASCII_SEG7_SYMBOL
++
++#define SEG7_DEFAULT_MAP(_name)		\
++	SEG7_CONVERSION_MAP(_name,MAP_ASCII7SEG_ALPHANUM)
++
++#endif	/* MAP_TO_7SEGMENT_H */
++
+-- 
+2.53.0
+

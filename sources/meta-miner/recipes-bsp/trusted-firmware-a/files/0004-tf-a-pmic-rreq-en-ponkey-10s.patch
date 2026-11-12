@@ -1,0 +1,24 @@
+diff --git a/drivers/st/pmic/stpmic1.c b/drivers/st/pmic/stpmic1.c
+index 6a0f893a1..6a822d27c 100644
+--- a/drivers/st/pmic/stpmic1.c
++++ b/drivers/st/pmic/stpmic1.c
+@@ -641,8 +641,17 @@ static uint8_t voltage_to_index(const char *name, uint16_t millivolts)
+ 
+ int stpmic1_powerctrl_on(void)
+ {
+-	return stpmic1_register_update(MAIN_CONTROL_REG, PWRCTRL_PIN_VALID,
+-				       PWRCTRL_PIN_VALID);
++	// Set PONKEY_TIMER_REG to 10 seconds
++	stpmic1_register_update(PONKEY_TIMER_REG, 0x86, 0xFF);
++
++	// Set RESTART_REQUEST_ENABLED to 1
++	stpmic1_register_update(MAIN_CONTROL_REG,
++	                        RESTART_REQUEST_ENABLED,
++	                        RESTART_REQUEST_ENABLED);
++
++	return stpmic1_register_update(MAIN_CONTROL_REG,
++	                               PWRCTRL_PIN_VALID,
++	                               PWRCTRL_PIN_VALID);
+ }
+ 
+ int stpmic1_switch_off(void)

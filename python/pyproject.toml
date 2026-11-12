@@ -1,0 +1,51 @@
+[project]
+name = "proto-distro-security-tools"
+version = "0.0.0"
+description = "proto distro"
+requires-python = ">=3.12"
+# First-party code is Apache-2.0; the vendored Android avbtool remains MIT.
+license = "Apache-2.0 AND MIT"
+license-files = ["LICENSE", "create_avb_image/_vendor/LICENSE"]
+
+dependencies = ["click", "pycryptodome"]
+
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+include = ["fsbl*", "create_avb_image*"]
+exclude = ["*.tests", "*.tests.*", "tests*"]
+
+[tool.setuptools.package-data]
+"create_avb_image._vendor" = ["UPSTREAM"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black==26.10.1",
+    "isort",
+]
+
+[project.scripts]
+fsbl_signer = "fsbl.fsbl_signer:cli"
+create_avb_image = "create_avb_image.create_avb_image:main"
+verify_avb_image = "create_avb_image.create_avb_image:verify_main"
+avbtool = "create_avb_image.create_avb_image:avbtool_main"
+
+[tool.pytest.ini_options]
+testpaths = ["fsbl/tests"]
+python_files = ["test_*.py"]
+addopts = "-v --tb=short"
+
+[tool.black]
+line-length = 120
+skip-string-normalization = false
+
+[tool.isort]
+profile = "black"
+line_length = 120
+known_first_party = ["fsbl", "create_avb_image"]

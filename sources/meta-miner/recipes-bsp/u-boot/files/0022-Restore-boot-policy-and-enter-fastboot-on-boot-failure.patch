@@ -1,0 +1,121 @@
+From: BTCM SW Team <btcm-sw-team@squareup.com>
+Subject: [PATCH] Restore compiled boot policy and recover over UDP fastboot
+
+Restore only existing boot-policy variables at every Proto board boot.
+Keep saved OTA, partition, network and application state intact. Use the
+existing protected altbootcmd for explicit fastboot requests and exhausted
+boot retries, preserving ROM serial/USB programming. Returned boots retain
+normal retries. Script verification and policy restoration failures invoke
+the compiled UDP recovery command directly.
+
+Upstream-Status: Inappropriate [Proto boot policy]
+---
+diff --git a/include/configs/stm32mp13_common.h b/include/configs/stm32mp13_common.h
+--- a/include/configs/stm32mp13_common.h
++++ b/include/configs/stm32mp13_common.h
+@@ -72,6 +72,7 @@
+ 
+ #define CONFIG_ENV_FLAGS_LIST_STATIC \
+ 	"bootcmd:so,"			\
++	"altbootcmd:so,"		\
+ 	"bootcmd_stm32mp:so,"		\
+ 	"distro_bootcmd:so,"		\
+ 	"bootcmd_mmc1:so,"		\
+@@ -111,6 +112,13 @@
+ 	"bootlimit:so,"			\
+ 	"verify:bo,"
+ 
++#define STM32MP_FASTBOOT_CMD \
++	"if test \"${reboot_fastboot}\" = 1; then " \
++		"env delete reboot_fastboot; saveenv; fi; " \
++	"bootcount reset; " \
++	"if test -z \"${ipaddr}\"; then setenv autoload no; dhcp; fi; " \
++	"fastboot udp; reset"
++
+ /*
+  * default bootcmd for stm32mp13 miner:
+  * for serial/usb: execute the stm32prog command
+@@ -121,7 +129,8 @@
+ 	"if test ${boot_device} = serial || test ${boot_device} = usb;" \
+ 	"then stm32prog ${boot_device} ${boot_instance}; " \
+ 	"else " \
+-		"run distro_bootcmd;" \
++		"if test \"${reboot_fastboot}\" = 1; then run altbootcmd; " \
++		"else run distro_bootcmd; fi;" \
+ 	"fi;\0"
+ 
+ #define STM32MP_EXTRA ""
+@@ -163,6 +172,7 @@
+ #define CONFIG_EXTRA_ENV_SETTINGS \
+ 	STM32MP_MEM_LAYOUT \
+ 	STM32MP_BOOTCMD \
++	"altbootcmd=" STM32MP_FASTBOOT_CMD "\0" \
+ 	BOOTENV \
+ 	STM32MP_BOOT_PART_LAYOUT \
+ 	STM32MP_BOARD_EXTRA_ENV
+diff --git a/include/configs/stm32mp13_st_common.h b/include/configs/stm32mp13_st_common.h
+--- a/include/configs/stm32mp13_st_common.h
++++ b/include/configs/stm32mp13_st_common.h
+@@ -30,7 +30,8 @@
+ 	"if test ${boot_device} = serial || test ${boot_device} = usb;" \
+ 	"then stm32prog ${boot_device} ${boot_instance}; " \
+ 	"else " \
+-		"run distro_bootcmd;" \
++		"if test \"${reboot_fastboot}\" = 1; then run altbootcmd; " \
++		"else run distro_bootcmd; fi;" \
+ 	"fi;\0"
+ 
+ 
+@@ -38,6 +39,7 @@
+ #define CONFIG_EXTRA_ENV_SETTINGS \
+ 	STM32MP_MEM_LAYOUT \
+ 	ST_STM32MP13_BOOTCMD \
++	"altbootcmd=" STM32MP_FASTBOOT_CMD "\0" \
+ 	BOOTENV \
+ 	STM32MP_BOOT_PART_LAYOUT \
+ 	STM32MP_BOARD_EXTRA_ENV
+diff --git a/board/st/stm32mp1/stm32mp1.c b/board/st/stm32mp1/stm32mp1.c
+--- a/board/st/stm32mp1/stm32mp1.c
++++ b/board/st/stm32mp1/stm32mp1.c
+@@ -31,6 +31,7 @@
+ #include <phy.h>
+ #include <remoteproc.h>
+ #include <reset.h>
++#include <search.h>
+ #include <syscon.h>
+ #include <typec.h>
+ #include <usb.h>
+@@ -928,8 +929,33 @@
+ 	setup_led(LEDST_ON);
+ }
+ 
++#ifdef STM32MP_FASTBOOT_CMD
++static int proto_cb_restore_boot_env(void)
++{
++	static char * const names[] = {
++		"bootcmd", "bootcmd_stm32mp", "distro_bootcmd", "bootcmd_mmc1",
++		"mmc_boot", "scan_dev_for_boot_part", "scan_dev_for_boot",
++		"scan_dev_for_scripts", "scan_dev_for_extlinux", "scan_dev_for_efi",
++		"boot_a_script", "boot_scripts", "boot_prefixes", "boot_extlinux",
++		"boot_efi_binary", "boot_efi_bootmgr", "boot_syslinux_conf",
++		"boot_targets", "altbootcmd",
++	};
++
++	return env_set_default_vars(ARRAY_SIZE(names), names, H_PROGRAMMATIC) ?
++		0 : -EIO;
++}
++#endif
++
+ static void board_proto_cb_late_init(void)
+ {
++#ifdef STM32MP_FASTBOOT_CMD
++	if (proto_cb_restore_boot_env()) {
++		puts("Failed to restore Proto boot policy\n");
++		run_command_list(STM32MP_FASTBOOT_CMD, -1, 0);
++		hang();
++	}
++#endif
++
+ 	if (env_get_yesno("factory_reset") == 1) {
+ 		// TODO: Implement factory reset
+ 	} else {

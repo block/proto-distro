@@ -1,0 +1,166 @@
+From 4aaeacda1a8ee84ebabe48e1dda57fbd67e2da05 Mon Sep 17 00:00:00 2001
+From: OpenEmbedded <oe.patch@oe>
+Date: Tue, 31 Mar 2026 14:33:10 +0000
+Subject: [PATCH 03/17] Enable gpio read cmd and feature
+
+---
+ cmd/Kconfig                 |  7 ++++++
+ cmd/gpio.c                  | 45 ++++++++++++++++++++++++++++++++++---
+ configs/sandbox_defconfig   |  1 +
+ configs/stm32mp13_defconfig |  1 +
+ 4 files changed, 51 insertions(+), 3 deletions(-)
+
+diff --git a/cmd/Kconfig b/cmd/Kconfig
+index 3a857b3f6e2..61d3b6b43a3 100644
+--- a/cmd/Kconfig
++++ b/cmd/Kconfig
+@@ -948,6 +948,13 @@ config CMD_GPIO
+ 	help
+ 	  GPIO support.
+ 
++config CMD_GPIO_READ
++	bool "gpio read - save GPIO value to variable"
++	depends on CMD_GPIO
++	help
++	  Enables the 'gpio read' command that saves the value
++	  of a GPIO pin to a variable.
++
+ config CMD_PWM
+ 	bool "pwm"
+ 	depends on DM_PWM
+diff --git a/cmd/gpio.c b/cmd/gpio.c
+index 4150024e628..53e9ce666f9 100644
+--- a/cmd/gpio.c
++++ b/cmd/gpio.c
+@@ -12,6 +12,9 @@
+ #include <dm.h>
+ #include <log.h>
+ #include <malloc.h>
++#ifdef CONFIG_CMD_GPIO_READ
++#include <env.h>
++#endif
+ #include <asm/gpio.h>
+ #include <linux/err.h>
+ 
+@@ -25,6 +28,9 @@ enum gpio_cmd {
+ 	GPIOC_SET,
+ 	GPIOC_CLEAR,
+ 	GPIOC_TOGGLE,
++#ifdef CONFIG_CMD_GPIO_READ
++	GPIOC_READ,
++#endif
+ };
+ 
+ #if defined(CONFIG_DM_GPIO) && !defined(gpio_status)
+@@ -125,6 +131,9 @@ static int do_gpio(struct cmd_tbl *cmdtp, int flag, int argc,
+ 	enum gpio_cmd sub_cmd;
+ 	int value;
+ 	const char *str_cmd, *str_gpio = NULL;
++#ifdef CONFIG_CMD_GPIO_READ
++	const char *str_var = NULL;
++#endif
+ 	int ret;
+ #ifdef CONFIG_DM_GPIO
+ 	bool all = false;
+@@ -137,11 +146,20 @@ static int do_gpio(struct cmd_tbl *cmdtp, int flag, int argc,
+ 	argc -= 2;
+ 	argv += 2;
+ #ifdef CONFIG_DM_GPIO
+-	if (argc > 0 && !strcmp(*argv, "-a")) {
++	if (argc > 0 && !strncmp(str_cmd, "status", 2) && !strcmp(*argv, "-a")) {
+ 		all = true;
+ 		argc--;
+ 		argv++;
+ 	}
++#endif
++#ifdef CONFIG_CMD_GPIO_READ
++	if (argc > 0 && !strncmp(str_cmd, "read", 2)) {
++		if (argc < 2)
++			goto show_usage;
++		str_var = *argv;
++		argc--;
++		argv++;
++	}
+ #endif
+ 	if (argc > 0)
+ 		str_gpio = *argv;
+@@ -174,6 +192,11 @@ static int do_gpio(struct cmd_tbl *cmdtp, int flag, int argc,
+ 	case 't':
+ 		sub_cmd = GPIOC_TOGGLE;
+ 		break;
++#ifdef CONFIG_CMD_GPIO_READ
++	case 'r':
++		sub_cmd = GPIOC_READ;
++		break;
++#endif
+ 	default:
+ 		goto show_usage;
+ 	}
+@@ -205,7 +228,11 @@ static int do_gpio(struct cmd_tbl *cmdtp, int flag, int argc,
+ 	}
+ 
+ 	/* finally, let's do it: set direction and exec command */
+-	if (sub_cmd == GPIOC_INPUT) {
++	if (sub_cmd == GPIOC_INPUT
++#ifdef CONFIG_CMD_GPIO_READ
++			|| sub_cmd == GPIOC_READ
++#endif
++			) {
+ 		gpio_direction_input(gpio);
+ 		value = gpio_get_value(gpio);
+ 	} else {
+@@ -233,9 +260,17 @@ static int do_gpio(struct cmd_tbl *cmdtp, int flag, int argc,
+ 		goto err;
+ 	} else {
+ 		printf("%d\n", value);
++#ifdef CONFIG_CMD_GPIO_READ
++		if (sub_cmd == GPIOC_READ)
++			env_set_ulong(str_var, (ulong)value);
++#endif
+ 	}
+ 
+-	if (sub_cmd != GPIOC_INPUT && !IS_ERR_VALUE(value)) {
++	if (sub_cmd != GPIOC_INPUT && !IS_ERR_VALUE(value)
++#ifdef CONFIG_CMD_GPIO_READ
++			&& sub_cmd != GPIOC_READ
++#endif
++			) {
+ 		int nval = gpio_get_value(gpio);
+ 
+ 		if (IS_ERR_VALUE(nval)) {
+@@ -267,4 +302,8 @@ U_BOOT_CMD(gpio, 4, 0, do_gpio,
+ 	   "query and control gpio pins",
+ 	   "<input|set|clear|toggle> <pin>\n"
+ 	   "    - input/set/clear/toggle the specified pin\n"
++#ifdef CONFIG_CMD_GPIO_READ
++	   "gpio read <name> <pin>\n"
++	   "    - set environment variable 'name' to the specified pin\n"
++#endif
+ 	   "gpio status [-a] [<bank> | <pin>]  - show [all/claimed] GPIOs");
+diff --git a/configs/sandbox_defconfig b/configs/sandbox_defconfig
+index e16026d5f83..675a3b14c29 100644
+--- a/configs/sandbox_defconfig
++++ b/configs/sandbox_defconfig
+@@ -56,6 +56,7 @@ CONFIG_CMD_MEMTEST=y
+ CONFIG_CMD_BIND=y
+ CONFIG_CMD_DEMO=y
+ CONFIG_CMD_GPIO=y
++CONFIG_CMD_GPIO_READ=y
+ CONFIG_CMD_PWM=y
+ CONFIG_CMD_GPT=y
+ CONFIG_CMD_GPT_RENAME=y
+diff --git a/configs/stm32mp13_defconfig b/configs/stm32mp13_defconfig
+index c551b8a0e0e..75bcaff7eeb 100644
+--- a/configs/stm32mp13_defconfig
++++ b/configs/stm32mp13_defconfig
+@@ -31,6 +31,7 @@ CONFIG_CMD_CLK=y
+ CONFIG_CMD_DFU=y
+ CONFIG_CMD_FUSE=y
+ CONFIG_CMD_GPIO=y
++CONFIG_CMD_GPIO_READ=y
+ CONFIG_CMD_I2C=y
+ CONFIG_CMD_MMC=y
+ CONFIG_CMD_SPI=y
+-- 
+2.53.0
+

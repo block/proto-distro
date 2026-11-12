@@ -1,0 +1,54 @@
+From bc6df6688ff477ce3cca138bbd4da2e0df2ccdb8 Mon Sep 17 00:00:00 2001
+From: Bart Kosciarz <bkosciarz@squareup.com>
+Date: Tue, 7 Oct 2025 01:56:20 -0700
+Subject: [PATCH 15/17] use rootfs over boot partition
+
+%% original patch: 0001-use-rootfs-over-boot-partition.patch
+---
+ lib/libavb/avb_cmdline.c     | 6 +++---
+ lib/libavb/avb_slot_verify.c | 2 +-
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/lib/libavb/avb_cmdline.c b/lib/libavb/avb_cmdline.c
+index cb54e658c48..748654aa081 100644
+--- a/lib/libavb/avb_cmdline.c
++++ b/lib/libavb/avb_cmdline.c
+@@ -21,7 +21,7 @@ char* avb_sub_cmdline(AvbOps* ops,
+                       const char* ab_suffix,
+                       bool using_boot_for_vbmeta,
+                       const AvbCmdlineSubstList* additional_substitutions) {
+-  const char* part_name_str[NUM_GUIDS] = {"system", "boot", "vbmeta"};
++  const char* part_name_str[NUM_GUIDS] = {"rootfs", "rootfs", "vbmeta"};
+   const char* replace_str[NUM_GUIDS] = {"$(ANDROID_SYSTEM_PARTUUID)",
+                                         "$(ANDROID_BOOT_PARTUUID)",
+                                         "$(ANDROID_VBMETA_PARTUUID)"};
+@@ -29,11 +29,11 @@ char* avb_sub_cmdline(AvbOps* ops,
+   AvbIOResult io_ret;
+   size_t n;
+ 
+-  /* Special-case for when the top-level vbmeta struct is in the boot
++  /* Special-case for when the top-level vbmeta struct is in the rootfs
+    * partition.
+    */
+   if (using_boot_for_vbmeta) {
+-    part_name_str[2] = "boot";
++    part_name_str[2] = "rootfs";
+   }
+ 
+   /* Replace unique partition GUIDs */
+diff --git a/lib/libavb/avb_slot_verify.c b/lib/libavb/avb_slot_verify.c
+index ddcc76ce4b9..b939f4d68ed 100644
+--- a/lib/libavb/avb_slot_verify.c
++++ b/lib/libavb/avb_slot_verify.c
+@@ -1491,7 +1491,7 @@ AvbSlotVerifyResult avb_slot_verify(AvbOps* ops,
+   if (!(flags & AVB_SLOT_VERIFY_FLAGS_NO_VBMETA_PARTITION)) {
+     if (avb_strcmp(slot_data->vbmeta_images[0].partition_name, "vbmeta") != 0) {
+       avb_assert(
+-          avb_strcmp(slot_data->vbmeta_images[0].partition_name, "boot") == 0);
++          avb_strcmp(slot_data->vbmeta_images[0].partition_name, "rootfs") == 0);
+       using_boot_for_vbmeta = true;
+     }
+   }
+-- 
+2.53.0
+

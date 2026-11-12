@@ -1,0 +1,5 @@
+do_compile[nostamp] = "1"
+do_install[nostamp] = "1"
+
+VERSION = "0.0.0"
+OS_RELEASE_FIELDS = "NAME VERSION DISTRO_BASE_VERSION GIT_HASH BUILD_DATETIME_UTC MACHINE"

@@ -1,0 +1,22 @@
+default_os := `go env GOOS`
+default_arch := `go env GOARCH`
+
+build os=default_os arch=default_arch:
+    @mkdir -p dist/{{ os }}-{{ arch }}
+    GOOS={{ os }} GOARCH={{ arch }} GOARM=7 CGO_ENABLED=0 go build \
+        -ldflags="-s -w" \
+        -o dist/{{ os }}-{{ arch }}/proto-swupdate ./cmd/proto-swupdate
+    @echo "Built: dist/{{ os }}-{{ arch }}/proto-swupdate"
+
+build-arm:
+    @just build linux arm
+
+test:
+    go test ./...
+
+clean:
+    @rm -rf dist/
+    @go clean
+
+run *ARGS:
+    @go run ./cmd/proto-swupdate {{ ARGS }}

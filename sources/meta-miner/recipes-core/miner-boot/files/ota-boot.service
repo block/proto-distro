@@ -1,0 +1,11 @@
+[Unit]
+Description=Run OTA-only boot preparation
+Requires=dev-disk-by\x2dpartlabel-u\x2dboot\x2denv.device
+After=local-fs.target dev-disk-by\x2dpartlabel-u\x2dboot\x2denv.device miner-firstboot.service
+Before=miner-boot.service
+
+[Service]
+Type=oneshot
+ExecCondition=/usr/bin/proto-swupdate is-rootfs-update-pending
+ExecStart=/usr/bin/ota-boot.sh
+ExecStartPost=-/bin/sh -c '@BASE_BINDIR@/systemctl is-active --quiet application-ota-boot.target || @BASE_BINDIR@/systemctl start application-ota-boot.target'
